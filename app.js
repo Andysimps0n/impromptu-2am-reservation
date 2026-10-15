@@ -19,7 +19,13 @@ async function api(path, options = {}) {
     headers: { 'content-type': 'application/json', ...(options.headers || {}) },
     ...options
   });
-  const payload = await response.json();
+  const text = await response.text();
+  let payload;
+  try {
+    payload = JSON.parse(text || '{}');
+  } catch {
+    throw new Error('예매 서버가 응답하지 않았습니다. 운영진 화면은 이 컴퓨터의 파일 미리보기에서는 열 수 없어요.');
+  }
   if (!response.ok) throw new Error(payload.error || '요청을 처리하지 못했습니다.');
   return payload;
 }
@@ -95,15 +101,27 @@ function renderSelection() {
   button.disabled = !seats.length || !bookingOpen;
   button.textContent = !bookingOpen ? '현재 예매가 마감되었습니다' : seats.length ? `${seats.length}석 예매 신청하기` : '좌석을 선택해주세요';
 }
-async function refreshSeats() {
-  const result = await api(`/api/seats?show=${selectedShow}`);
-  seatStates = result.seats;
-  bookingOpen = result.bookingOpen !== false;
+function showLocalSeatMap() {
+  seatStates = Object.fromEntries(SEATS.map(seat => [seat, seat.startsWith('A') ? 'reserved' : 'available']));
+  bookingOpen = true;
   const closedBanner = document.querySelector('#booking-closed-banner');
-  if (closedBanner) closedBanner.hidden = bookingOpen;
-  for (const seat of selected) if (seatStates[seat] !== 'available') selected.delete(seat);
+  if (closedBanner) closedBanner.hidden = true;
   renderSeats();
   renderSelection();
+}
+async function refreshSeats() {
+  try {
+    const result = await api(`/api/seats?show=${selectedShow}`);
+    seatStates = result.seats;
+    bookingOpen = result.bookingOpen !== false;
+    const closedBanner = document.querySelector('#booking-closed-banner');
+    if (closedBanner) closedBanner.hidden = bookingOpen;
+    for (const seat of selected) if (seatStates[seat] !== 'available') selected.delete(seat);
+    renderSeats();
+    renderSelection();
+  } catch {
+    showLocalSeatMap();
+  }
 }
 function closeModal() { document.querySelector('#modal-root').innerHTML = ''; }
 function modal(content) {
@@ -198,9 +216,17 @@ function openLookup(prefill = '') {
     } catch (problem) { error.textContent = problem.message; }
   };
 }
+function showBookingView() {
+  document.querySelector('#booking-view').classList.remove('hidden');
+  document.querySelector('#admin-view').classList.add('hidden');
+  document.querySelectorAll('.tab').forEach(item => item.classList.toggle('active', item.dataset.view === 'booking'));
+  updateShowDetails();
+  refreshSeats();
+}
 async function adminLoginScreen(message = '') {
   document.querySelector('#admin-view').dataset.authenticated = 'false';
-  document.querySelector('#admin-view').innerHTML = `<div class="admin-login"><div class="eyebrow">BACKSTAGE · ADMIN</div><h2>운영진 로그인</h2><p>공연 예매와 입금 확인은 운영진만 볼 수 있습니다.</p><form id="admin-login-form"><label for="admin-username">아이디</label><input id="admin-username" autocomplete="username" required><label for="admin-password">비밀번호</label><input id="admin-password" type="password" autocomplete="current-password" required><button class="primary" type="submit">로그인</button><div class="error-text" id="admin-login-error">${escapeHtml(message)}</div></form></div>`;
+  document.querySelector('#admin-view').innerHTML = `<div class="admin-login"><button class="login-back" type="button" id="admin-back">← 공연 예매로 돌아가기</button><div class="eyebrow">BACKSTAGE · ADMIN</div><h2>운영진 로그인</h2><p>공연 예매와 입금 확인은 운영진만 볼 수 있습니다.</p><form id="admin-login-form"><label for="admin-username">아이디</label><input id="admin-username" autocomplete="username" required><label for="admin-password">비밀번호</label><input id="admin-password" type="password" autocomplete="current-password" required><button class="primary" type="submit">로그인</button><div class="error-text" id="admin-login-error">${escapeHtml(message)}</div></form></div>`;
+  document.querySelector('#admin-back').onclick = showBookingView;
   document.querySelector('#admin-login-form').onsubmit = async event => {
     event.preventDefault();
     const error = document.querySelector('#admin-login-error');
@@ -259,7 +285,11 @@ async function renderAdmin() {
         await renderAdmin(); refreshSeats().catch(() => {});
       } catch (error) { toast(error.message); }
     });
-  } catch (error) { view.innerHTML = `<div class="admin-login"><h2>운영자 화면을 불러오지 못했습니다.</h2><p>${escapeHtml(error.message)}</p></div>`; }
+  } catch (error) {
+    view.dataset.authenticated = 'false';
+    view.innerHTML = `<div class="admin-login"><button class="login-back" type="button" id="admin-back">← 공연 예매로 돌아가기</button><h2>운영자 화면을 불러오지 못했습니다.</h2><p>${escapeHtml(error.message)}</p></div>`;
+    document.querySelector('#admin-back').onclick = showBookingView;
+  }
 }
 
 function openResetConfirmation() {
@@ -289,14 +319,14 @@ function openResetConfirmation() {
   };
 }
 
-document.querySelectorAll('.tab').forEach(tab => tab.addEventListener('click', async () => {
-  document.querySelectorAll('.tab').forEach(item => item.classList.toggle('active', item === tab));
-  const isAdmin = tab.dataset.view === 'admin';
-  document.querySelector('#booking-view').classList.toggle('hidden', isAdmin);
-  document.querySelector('#admin-view').classList.toggle('hidden', !isAdmin);
-  if (isAdmin) await renderAdmin();
-  else { updateShowDetails(); refreshSeats().catch(error => toast(`좌석 정보를 불러오지 못했습니다: ${error.message}`)); }
+document.querySelectorAll('.tab').forEach(tab => tab.addEventListener('click', () => {
+  if (tab.dataset.view === 'booking') showBookingView();
 }));
+document.querySelector('#staff-link').addEventListener('click', async () => {
+  document.querySelector('#booking-view').classList.add('hidden');
+  document.querySelector('#admin-view').classList.remove('hidden');
+  await renderAdmin();
+});
 document.querySelector('#book-button').onclick = openBooking;
 document.querySelectorAll('[data-booking-show]').forEach(button => button.addEventListener('click', async () => {
   selectedShow = button.dataset.bookingShow;
@@ -307,7 +337,10 @@ document.querySelectorAll('[data-booking-show]').forEach(button => button.addEve
 }));
 updateShowDetails();
 document.querySelector('#lookup-open').onclick = () => openLookup();
-refreshSeats().catch(error => toast(`좌석 정보를 불러오지 못했습니다: ${error.message}`));
+document.querySelector('#hero-book')?.addEventListener('click', () => {
+  document.querySelector('.seat-panel')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+});
+refreshSeats();
 setInterval(() => { if (!document.querySelector('#booking-view').classList.contains('hidden')) refreshSeats().catch(() => {}); }, 12000);
 setInterval(() => {
   const admin = document.querySelector('#admin-view');

@@ -1,5 +1,8 @@
 const INDEX_HTML = __INDEX_HTML__;
 const APP_JS = __APP_JS__;
+const SITE_CSS = __SITE_CSS__;
+const LOGO_PNG = __LOGO_PNG__;
+const HERO_LOGO_PNG = __HERO_LOGO_PNG__;
 const PRICE = 6500;
 const HOLD_MS = 30 * 60 * 1000;
 const ROWS = Array.from({ length: 12 }, (_, i) => String.fromCharCode(65 + i));
@@ -74,6 +77,15 @@ export default {
     try {
       if (request.method === 'GET' && url.pathname === '/') return new Response(INDEX_HTML, { headers: { 'content-type': 'text/html; charset=utf-8', 'cache-control': 'no-store' } });
       if (request.method === 'GET' && url.pathname === '/app.js') return new Response(APP_JS, { headers: { 'content-type': 'text/javascript; charset=utf-8', 'cache-control': 'no-store' } });
+      if (request.method === 'GET' && url.pathname === '/styles.css') return new Response(SITE_CSS, { headers: { 'content-type': 'text/css; charset=utf-8', 'cache-control': 'no-store' } });
+      if (request.method === 'GET' && decodeURIComponent(url.pathname) === '/즉새두로고2.png') {
+        const bytes = Uint8Array.from(atob(LOGO_PNG), char => char.charCodeAt(0));
+        return new Response(bytes, { headers: { 'content-type': 'image/png', 'cache-control': 'no-store' } });
+      }
+      if (request.method === 'GET' && decodeURIComponent(url.pathname) === '/즉새두로고1.png') {
+        const bytes = Uint8Array.from(atob(HERO_LOGO_PNG), char => char.charCodeAt(0));
+        return new Response(bytes, { headers: { 'content-type': 'image/png', 'cache-control': 'no-store' } });
+      }
       if (request.method === 'GET' && url.pathname === '/api/seats') {
         const showId = url.searchParams.get('show') || '1';
         if (!SHOWS.has(showId)) return json({ error: '공연 회차를 확인해주세요.' }, 400);
