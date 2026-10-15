@@ -1,6 +1,11 @@
-const PRICE = 12000;
+const PRICE = 6500;
 const ROWS = Array.from({ length: 12 }, (_, row) => String.fromCharCode(65 + row));
 const SHOWS = ['1', '2', '3'];
+const SHOW_DETAILS = {
+  '1': { date: '2026년 11월 21일 토요일', time: '오후 8시' },
+  '2': { date: '2026년 11월 22일 일요일', time: '오후 3시' },
+  '3': { date: '2026년 11월 22일 일요일', time: '오후 9시' },
+};
 const SEATS = ROWS.flatMap(row => Array.from({ length: row === 'L' ? 8 : 12 }, (_, index) => `${row}${String(index + 1).padStart(2, '0')}`));
 let selected = new Set();
 let seatStates = {};
@@ -24,6 +29,16 @@ function toast(message) {
   const root = document.querySelector('#toast-root');
   root.innerHTML = `<div class="toast">${escapeHtml(message)}</div>`;
   setTimeout(() => { root.innerHTML = ''; }, 2800);
+}
+function showDetails(show = selectedShow) { return SHOW_DETAILS[show]; }
+function updateShowDetails() {
+  const details = showDetails();
+  const date = document.querySelector('#show-date');
+  const time = document.querySelector('#show-time');
+  if (date) date.textContent = details.date;
+  if (time) time.textContent = details.time;
+  const eventTime = document.querySelector('#event-time');
+  if (eventTime) eventTime.textContent = `${selectedShow}공 · ${details.date} ${details.time}`;
 }
 function renderSeats() {
   const grid = document.querySelector('#seat-grid');
@@ -93,19 +108,57 @@ function modal(content) {
   root.querySelector('#backdrop').addEventListener('click', event => { if (event.target.id === 'backdrop') closeModal(); });
 }
 function showBookingSuccess(booking) {
-  modal(`<div class="success"><div class="check">✓</div><div class="eyebrow">REQUEST RECEIVED</div><h2>입금 대기 예약이 등록됐어요</h2><p>아래 예약 코드를 입금 메모에 적어주세요.<br>입금 확인 전까지 좌석은 30분간 확보됩니다.</p><div class="code">${escapeHtml(booking.id)}</div><div style="margin:0 0 12px"><span class="badge">● 입금 대기</span></div><div class="bank-box" style="text-align:left"><strong>입금 계좌 안내</strong><br>카카오뱅크 <strong>3333376900284</strong><br>입금액 ${booking.amount.toLocaleString()}원 · 입금자명은 신청 내용과 동일하게</div><button class="primary" id="success-close">예약 정보 보기</button></div>`);
+  const details = showDetails(booking.showId || selectedShow);
+  modal(`<div class="success"><div class="check">✓</div><div class="eyebrow">REQUEST RECEIVED</div><h2>입금 대기 예약이 등록됐어요</h2><p>${booking.showId || selectedShow}공 · ${details.date} ${details.time}<br>아래 예약 코드를 입금 메모에 적어주세요.<br>입금 확인 전까지 좌석은 30분간 확보됩니다.</p><div class="code">${escapeHtml(booking.id)}</div><div style="margin:0 0 12px"><span class="badge">● 입금 대기</span></div><div class="bank-box" style="text-align:left"><strong>입금 계좌 안내</strong><br>카카오뱅크 <strong>3333376900284</strong><br>입금액 ${booking.amount.toLocaleString()}원 · 입금자명은 신청 내용과 동일하게</div><button class="primary" id="success-close">예약 정보 보기</button></div>`);
   document.querySelector('#success-close').onclick = () => openLookup(booking.id);
 }
 function openBooking() {
   const seats = [...selected].sort();
-  modal(`<button class="close" id="close-modal">×</button><div class="eyebrow">BOOK YOUR SEAT</div><h2>예매 정보를 입력해주세요</h2><p class="sub">${seats.join(', ')} · ${(seats.length * PRICE).toLocaleString()}원</p><form id="booking-form"><div class="form-grid"><div class="field"><label for="name">예매자 이름</label><input id="name" name="name" required maxlength="40" placeholder="홍길동"></div><div class="field"><label for="phone">연락처</label><input id="phone" name="phone" required type="tel" maxlength="13" placeholder="010-1234-5678"></div><div class="field"><label for="payer">입금자명</label><input id="payer" name="payer" required maxlength="40" placeholder="실제 입금할 이름"></div></div><div class="bank-box"><strong>입금 계좌 안내</strong><br>카카오뱅크 <strong>3333376900284</strong><br>입금 기한: 예약 후 30분 이내</div><button class="primary" id="booking-submit" type="submit">입금 대기 예약하기</button><div id="booking-error" class="error-text"></div><p class="hint">연락처 하나당 최대 2석입니다. 연락처는 예약 조회와 중복 예매 제한에 사용합니다.</p></form>`);
-  document.querySelector('#booking-form').onsubmit = async event => {
+  modal(`<button class="close" id="close-modal" aria-label="닫기">×</button><div class="eyebrow">BOOK YOUR SEAT</div><h2>예매 정보를 입력해주세요</h2><p class="sub">${selectedShow}공 · ${showDetails().date} ${showDetails().time}<br>${seats.join(', ')} · ${(seats.length * PRICE).toLocaleString()}원</p><div class="form-guidance"><strong>입력을 마치고 ‘입금 대기 예약하기’를 눌러주세요.</strong><span>이름과 입금자명을 적고, 연락처는 숫자 10~11자리로 입력하면 됩니다. 입력이 잘못된 칸은 아래에 안내해드려요.</span></div><form id="booking-form" novalidate><div class="form-grid"><div class="field"><label for="name">예매자 이름 <span>필수</span></label><input id="name" name="name" autocomplete="name" maxlength="40" placeholder="예: 홍길동" aria-describedby="name-help name-error"><small id="name-help" class="field-help">예매할 분의 이름을 입력해주세요.</small><small id="name-error" class="field-error" aria-live="polite"></small></div><div class="field"><label for="phone">연락처 <span>필수</span></label><input id="phone" name="phone" type="tel" inputmode="tel" autocomplete="tel" maxlength="20" placeholder="예: 010-1234-5678" aria-describedby="phone-help phone-error"><small id="phone-help" class="field-help">숫자만 또는 하이픈을 넣어 입력해도 됩니다. 예약 조회와 안내에 사용해요.</small><small id="phone-error" class="field-error" aria-live="polite"></small></div><div class="field"><label for="payer">입금자명 <span>필수</span></label><input id="payer" name="payer" autocomplete="name" maxlength="40" placeholder="예: 홍길동" aria-describedby="payer-help payer-error"><small id="payer-help" class="field-help">계좌에 실제로 송금할 분의 이름을 적어주세요.</small><small id="payer-error" class="field-error" aria-live="polite"></small></div></div><div class="bank-box"><strong>입금 계좌 안내</strong><br>카카오뱅크 <strong>3333376900284</strong><br>입금 기한: 예약 후 30분 이내</div><div id="booking-error" class="form-error-summary" role="alert" aria-live="assertive" hidden></div><button class="primary" id="booking-submit" type="submit">입금 대기 예약하기</button><p class="hint">연락처 하나당 최대 2석입니다. 입력한 연락처로 예약을 다시 조회할 수 있어요.</p></form>`);
+  const formElement = document.querySelector('#booking-form');
+  const errorText = field => {
+    const value = formElement.elements[field].value.trim();
+    if (field === 'name' && !value) return '예매자 이름을 입력해주세요.';
+    if (field === 'name' && value.length > 40) return '이름은 40자 이내로 입력해주세요.';
+    if (field === 'payer' && !value) return '실제 입금할 분의 이름을 입력해주세요.';
+    if (field === 'payer' && value.length > 40) return '입금자명은 40자 이내로 입력해주세요.';
+    if (field === 'phone') {
+      const digits = value.replace(/\D/g, '');
+      if (!value) return '연락처를 입력해주세요. 예: 010-1234-5678';
+      if (digits.length < 10 || digits.length > 11) return '연락처 숫자를 10~11자리로 입력해주세요. 예: 010-1234-5678';
+    }
+    return '';
+  };
+  const validateField = (field, show = true) => {
+    const input = formElement.elements[field];
+    const error = errorText(field);
+    input.setAttribute('aria-invalid', error ? 'true' : 'false');
+    document.querySelector(`#${field}-error`).textContent = show ? error : '';
+    return !error;
+  };
+  ['name', 'phone', 'payer'].forEach(field => {
+    const input = formElement.elements[field];
+    input.addEventListener('blur', () => validateField(field));
+    input.addEventListener('input', () => {
+      if (input.getAttribute('aria-invalid') === 'true') validateField(field);
+    });
+  });
+  formElement.onsubmit = async event => {
     event.preventDefault();
     const submit = document.querySelector('#booking-submit');
     const errorMessage = document.querySelector('#booking-error');
+    const fields = ['name', 'phone', 'payer'];
+    const valid = fields.map(field => validateField(field)).every(Boolean);
+    if (!valid) {
+      errorMessage.hidden = false;
+      errorMessage.textContent = '입력란 아래 안내를 확인하고 정보를 수정해주세요.';
+      formElement.querySelector('[aria-invalid="true"]')?.focus();
+      return;
+    }
     submit.disabled = true;
     submit.textContent = '예약 처리 중…';
     errorMessage.textContent = '';
+    errorMessage.hidden = true;
     const form = new FormData(event.currentTarget);
     try {
       const booking = await api('/api/bookings', { method: 'POST', body: JSON.stringify({ name: form.get('name'), phone: form.get('phone'), payer: form.get('payer'), seats, showId: selectedShow }) });
@@ -114,6 +167,7 @@ function openBooking() {
       showBookingSuccess(booking);
     } catch (error) {
       refreshSeats().catch(() => {});
+      errorMessage.hidden = false;
       errorMessage.textContent = error.message;
       submit.disabled = false;
       submit.textContent = '입금 대기 예약하기';
@@ -123,7 +177,8 @@ function openBooking() {
 function showBookingResult(booking) {
   const status = ({ paid: '입금 확인 · 예매 확정', pending: '입금 대기', expired: '예약 만료', cancelled: '취소됨 · 입금 전 예약', refund_pending: '취소 접수 · 환불 처리 중', refunded: '환불 완료' })[booking.status] || '상태 확인 필요';
   const badge = ['paid', 'refunded'].includes(booking.status) ? 'badge paid' : ['expired', 'cancelled'].includes(booking.status) ? 'badge expired' : 'badge';
-  modal(`<button class="close" id="close-modal">×</button><div class="eyebrow">BOOKING LOOKUP</div><h2>예약 내역</h2><p class="sub">예약 코드 ${escapeHtml(booking.id)}</p><div class="bank-box"><strong>${escapeHtml(booking.name)} · 좌석 ${escapeHtml(booking.seats.join(', '))}</strong><br>${booking.amount.toLocaleString()}원 · 입금자 ${escapeHtml(booking.payer)}<br><span class="${badge}">${status}</span></div><p class="hint">예약 코드와 연락처로 언제든 다시 조회할 수 있어요.</p>`);
+  const details = showDetails(booking.showId || '1');
+  modal(`<button class="close" id="close-modal">×</button><div class="eyebrow">BOOKING LOOKUP</div><h2>예약 내역</h2><p class="sub">예약 코드 ${escapeHtml(booking.id)}</p><div class="bank-box"><strong>${booking.showId || '1'}공 · ${details.date} ${details.time}</strong><br><strong>${escapeHtml(booking.name)} · 좌석 ${escapeHtml(booking.seats.join(', '))}</strong><br>${booking.amount.toLocaleString()}원 · 입금자 ${escapeHtml(booking.payer)}<br><span class="${badge}">${status}</span></div><p class="hint">예약 코드와 연락처로 언제든 다시 조회할 수 있어요.</p>`);
 }
 function openLookup(prefill = '') {
   modal(`<button class="close" id="close-modal">×</button><div class="eyebrow">FIND YOUR BOOKING</div><h2>내 예약 조회</h2><p class="sub">예매할 때 입력한 연락처를 입력해주세요.</p><form id="lookup-form"><div class="form-grid"><div class="field"><label for="booking-code">예약 코드</label><input id="booking-code" name="id" required placeholder="STG-ABC123" value="${escapeHtml(prefill)}"></div><div class="field"><label for="lookup-phone">연락처</label><input id="lookup-phone" name="phone" required type="tel" placeholder="010-1234-5678"></div></div><button class="primary" type="submit">예약 조회하기</button><div id="lookup-error" class="error-text"></div></form>`);
@@ -201,8 +256,10 @@ document.querySelectorAll('[data-booking-show]').forEach(button => button.addEve
   selectedShow = button.dataset.bookingShow;
   selected.clear();
   document.querySelectorAll('[data-booking-show]').forEach(item => item.classList.toggle('active', item === button));
+  updateShowDetails();
   await refreshSeats();
 }));
+updateShowDetails();
 document.querySelector('#lookup-open').onclick = () => openLookup();
 refreshSeats().catch(error => toast(`좌석 정보를 불러오지 못했습니다: ${error.message}`));
 setInterval(() => { if (!document.querySelector('#booking-view').classList.contains('hidden')) refreshSeats().catch(() => {}); }, 12000);

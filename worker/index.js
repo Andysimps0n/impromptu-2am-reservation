@@ -1,6 +1,6 @@
 const INDEX_HTML = __INDEX_HTML__;
 const APP_JS = __APP_JS__;
-const PRICE = 12000;
+const PRICE = 6500;
 const HOLD_MS = 30 * 60 * 1000;
 const ROWS = Array.from({ length: 12 }, (_, i) => String.fromCharCode(65 + i));
 const SHOWS = new Set(['1', '2', '3']);
@@ -87,7 +87,10 @@ export default {
         const phone = normalizePhone(input.phone);
         const name = String(input.name || '').trim();
         const payer = String(input.payer || '').trim();
-        if (!name || name.length > 40 || !payer || payer.length > 40 || phone.length < 10 || phone.length > 11 || seats.length < 1 || seats.length > 2 || seats.some(seat => !ALL_SEATS.includes(seat))) return json({ error: '입력 정보나 좌석을 확인해주세요.' }, 400);
+        if (!name || name.length > 40) return json({ error: '예매자 이름을 입력해주세요. (최대 40자)' }, 400);
+        if (!payer || payer.length > 40) return json({ error: '입금자명을 입력해주세요. 실제 송금하실 이름을 적어주세요. (최대 40자)' }, 400);
+        if (phone.length < 10 || phone.length > 11) return json({ error: '연락처는 숫자 10~11자리로 입력해주세요. 예: 010-1234-5678' }, 400);
+        if (seats.length < 1 || seats.length > 2 || seats.some(seat => !ALL_SEATS.includes(seat))) return json({ error: '선택한 좌석 정보를 확인해주세요. 좌석은 한 번에 최대 2석까지 신청할 수 있습니다.' }, 400);
         if (seats.some(seat => RESERVED.has(seat))) return json({ error: 'A열은 운영진 보유석으로 예매할 수 없습니다.' }, 400);
         const existing = await db.prepare("SELECT COUNT(*) AS count FROM booking_seats s JOIN bookings b ON b.id=s.booking_id WHERE b.phone=? AND b.show_id=? AND b.status IN ('pending','paid','refund_pending')").bind(phone, showId).first();
         if (existing.count + seats.length > 2) return json({ error: '연락처 하나당 최대 2석까지 예매할 수 있습니다.' }, 429);
