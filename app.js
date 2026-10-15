@@ -334,6 +334,20 @@ async function adminLoginScreen(message = '') {
     } catch (problem) { error.textContent = problem.message; }
   };
 }
+function bookingNotificationHtml(order) {
+  const status = order.notificationStatus || 'untracked';
+  const attempts = Number(order.notificationAttempts || 0);
+  const views = {
+    untracked: ['이전 예약 · 발송 이력 없음', 'sms-uncertain'],
+    sending: ['문자 처리 중', 'sms-pending'],
+    accepted: [`문자 발송 접수 완료 · ${attempts}회`, 'sms-ok'],
+    failed: [`문자 발송 실패 · ${attempts}회${order.notificationErrorCode ? ` · ${escapeHtml(order.notificationErrorCode)}` : ''}`, 'sms-failed'],
+    not_configured: [`문자 설정 필요 · ${attempts}회`, 'sms-failed'],
+    uncertain: [`발송 여부 확인 필요 · ${attempts}회${order.notificationErrorCode ? ` · ${escapeHtml(order.notificationErrorCode)}` : ''}`, 'sms-uncertain'],
+  };
+  const view = views[status];
+  return view ? `<small class="sms-status ${view[1]}">${view[0]}</small>` : '';
+}
 async function renderAdmin() {
   const view = document.querySelector('#admin-view');
   try {
@@ -345,7 +359,7 @@ async function renderAdmin() {
     bookingOpen = data.bookingOpen !== false;
     const pending = orders.filter(order => order.status === 'pending').length;
     const paid = orders.filter(order => order.status === 'paid').reduce((sum, order) => sum + order.seats.length, 0);
-    view.innerHTML = `<div class="admin-head"><div><div class="eyebrow">BACKSTAGE · ADMIN</div><h1>예매 관리</h1><p>입금 확인, 예약 취소와 환불 처리를 관리해주세요.</p></div><button id="admin-logout" class="admin-action">로그아웃</button></div><section class="panel booking-control"><div><div class="eyebrow">SITE STATUS</div><h2>사이트 예매 접수</h2><p>${bookingOpen ? '사이트가 열려 있어 모든 회차 예매를 받고 있습니다.' : '사이트가 닫혀 있어 방문자는 좌석을 선택하거나 예약할 수 없습니다.'}</p></div><div class="control-actions"><span class="site-status ${bookingOpen ? 'is-open' : 'is-closed'}">${bookingOpen ? '접수 중' : '접수 마감'}</span><button id="booking-toggle" class="admin-action ${bookingOpen ? 'danger' : ''}">${bookingOpen ? '예매 접수 닫기' : '예매 접수 열기'}</button></div></section><div class="show-picker admin-show-picker" role="group" aria-label="관리할 공연 선택">${SHOWS.map(show => `<button class="show-option ${selectedShow === show ? 'active' : ''}" data-show="${show}">${show}공</button>`).join('')}</div><div class="metrics"><div class="metric"><span>전체 예매</span><strong>${orders.length} <small>건</small></strong></div><div class="metric"><span>입금 확인 대기</span><strong>${pending} <small>건</small></strong></div><div class="metric"><span>확정된 좌석</span><strong>${paid} <small>석</small></strong></div></div><section class="panel orders"><div class="orders-top"><h2>${selectedShow}공 예매 신청 목록</h2><span>확정 취소 시 실제 환불 송금 후 완료 처리하세요</span></div><div id="orders-list">${orders.length ? orders.map(order => `<div class="order"><div class="order-name">${escapeHtml(order.name)}<small>${escapeHtml(order.id)} · ${new Date(order.createdAt).toLocaleString('ko-KR')}</small></div><div class="order-cell">${escapeHtml(order.seats.join(', '))}<small>${order.amount.toLocaleString()}원 · 입금자 ${escapeHtml(order.payer)}</small></div><div class="order-cell">${escapeHtml(order.phone)}<small>${order.seats.length}석</small></div><div><span class="badge ${({ paid: 'paid', expired: 'expired', cancelled: 'expired', refund_pending: '', refunded: 'expired' })[order.status] || ''}">${({ pending: '● 입금 대기', paid: '● 입금 확인', expired: '예약 만료', cancelled: '취소됨', refund_pending: '환불 처리 중', refunded: '환불 완료' })[order.status] || '상태 확인 필요'}</span></div><div class="order-actions">${order.status === 'pending' ? `<button class="admin-action" data-confirm="${escapeHtml(order.id)}">입금 확인</button>` : ''}${['pending', 'paid'].includes(order.status) ? `<button class="admin-action danger" data-cancel="${escapeHtml(order.id)}" data-status="${order.status}">예약 취소</button>` : ''}${order.status === 'refund_pending' ? `<button class="admin-action" data-refund-complete="${escapeHtml(order.id)}">환불 완료 처리</button>` : ''}</div></div>`).join('') : '<div class="empty-admin">이 공연에는 아직 예매 신청이 없습니다.</div>'}</div></section><section class="panel reset-panel"><div><h2>전체 예매 기록 초기화</h2><p>1·2·3공의 예약, 좌석 선점, 입금 상태를 모두 삭제합니다. 초기화한 데이터는 복구할 수 없습니다.</p></div><button id="reset-all" class="admin-action danger">전체 초기화</button></section>`;
+    view.innerHTML = `<div class="admin-head"><div><div class="eyebrow">BACKSTAGE · ADMIN</div><h1>예매 관리</h1><p>입금 확인, 예약 취소와 환불 처리를 관리해주세요.</p></div><button id="admin-logout" class="admin-action">로그아웃</button></div><section class="panel booking-control"><div><div class="eyebrow">SITE STATUS</div><h2>사이트 예매 접수</h2><p>${bookingOpen ? '사이트가 열려 있어 모든 회차 예매를 받고 있습니다.' : '사이트가 닫혀 있어 방문자는 좌석을 선택하거나 예약할 수 없습니다.'}</p></div><div class="control-actions"><span class="site-status ${bookingOpen ? 'is-open' : 'is-closed'}">${bookingOpen ? '접수 중' : '접수 마감'}</span><button id="booking-toggle" class="admin-action ${bookingOpen ? 'danger' : ''}">${bookingOpen ? '예매 접수 닫기' : '예매 접수 열기'}</button></div></section><div class="show-picker admin-show-picker" role="group" aria-label="관리할 공연 선택">${SHOWS.map(show => `<button class="show-option ${selectedShow === show ? 'active' : ''}" data-show="${show}">${show}공</button>`).join('')}</div><div class="metrics"><div class="metric"><span>전체 예매</span><strong>${orders.length} <small>건</small></strong></div><div class="metric"><span>입금 확인 대기</span><strong>${pending} <small>건</small></strong></div><div class="metric"><span>확정된 좌석</span><strong>${paid} <small>석</small></strong></div></div><section class="panel orders"><div class="orders-top"><h2>${selectedShow}공 예매 신청 목록</h2><span>문자 발송 실패 시 재전송할 수 있습니다. ‘발송 여부 확인 필요’는 Solapi 내역을 먼저 확인하세요.</span></div><div id="orders-list">${orders.length ? orders.map(order => `<div class="order"><div class="order-name">${escapeHtml(order.name)}<small>${escapeHtml(order.id)} · ${new Date(order.createdAt).toLocaleString('ko-KR')}</small></div><div class="order-cell">${escapeHtml(order.seats.join(', '))}<small>${order.amount.toLocaleString()}원 · 입금자 ${escapeHtml(order.payer)}</small></div><div class="order-cell">${escapeHtml(order.phone)}<small>${order.seats.length}석</small></div><div><span class="badge ${({ paid: 'paid', expired: 'expired', cancelled: 'expired', refund_pending: '', refunded: 'expired' })[order.status] || ''}">${({ pending: '● 입금 대기', paid: '● 입금 확인', expired: '예약 만료', cancelled: '취소됨', refund_pending: '환불 처리 중', refunded: '환불 완료' })[order.status] || '상태 확인 필요'}</span>${bookingNotificationHtml(order)}</div><div class="order-actions">${order.status === 'pending' ? `<button class="admin-action" data-confirm="${escapeHtml(order.id)}">입금 확인</button>` : ''}${order.status === 'paid' && ['failed', 'not_configured', 'untracked'].includes(order.notificationStatus) ? `<button class="admin-action" data-retry-sms="${escapeHtml(order.id)}" data-untracked="${order.notificationStatus === 'untracked'}">${order.notificationStatus === 'untracked' ? '이력 확인 후 재전송' : '문자 재전송'}</button>` : ''}${['pending', 'paid'].includes(order.status) ? `<button class="admin-action danger" data-cancel="${escapeHtml(order.id)}" data-status="${order.status}">예약 취소</button>` : ''}${order.status === 'refund_pending' ? `<button class="admin-action" data-refund-complete="${escapeHtml(order.id)}">환불 완료 처리</button>` : ''}</div></div>`).join('') : '<div class="empty-admin">이 공연에는 아직 예매 신청이 없습니다.</div>'}</div></section><section class="panel reset-panel"><div><h2>전체 예매 기록 초기화</h2><p>1·2·3공의 예약, 좌석 선점, 입금 상태를 모두 삭제합니다. 초기화한 데이터는 복구할 수 없습니다.</p></div><button id="reset-all" class="admin-action danger">전체 초기화</button></section>`;
     const adminActions = view.querySelector('#admin-logout').parentElement;
     adminActions.classList.add('admin-head-actions');
     const checkinButton = document.createElement('button');
@@ -374,12 +388,32 @@ async function renderAdmin() {
           ? ' 확정 안내 문자를 발송 요청했습니다.'
           : result.notification === 'not_configured'
             ? ' 문자 발송 설정이 빠져 있습니다.'
-            : ` 문자 발송에 실패했습니다${result.notificationCode ? ` (오류 코드: ${escapeHtml(result.notificationCode)})` : ''}. Cloudflare Worker 로그에서 상세 원인을 확인해주세요.`;
+            : result.notification === 'uncertain'
+              ? ' 문자 요청의 접수 여부를 확인할 수 없습니다. 중복 발송을 막기 위해 재전송 버튼은 표시하지 않습니다. Solapi 발송 내역을 확인해주세요.'
+              : ` 문자 발송에 실패했습니다${result.notificationCode ? ` (오류 코드: ${escapeHtml(result.notificationCode)})` : ''}.`;
         const message = `입금 확인을 완료했습니다.${notification}`;
-        toast(message, result.notification === 'failed' ? { duration: 30000, copyable: true } : {});
+        toast(message, ['failed', 'uncertain'].includes(result.notification) ? { duration: 30000, copyable: true } : {});
         await renderAdmin(); refreshSeats().catch(() => {});
       }
       catch (error) { toast(error.message); }
+    });
+    view.querySelectorAll('[data-retry-sms]').forEach(button => button.onclick = async () => {
+      if (button.dataset.untracked === 'true' && !window.confirm('이 예약은 이전 버전에서 문자 발송 기록을 저장하지 않았습니다. Solapi 발송 내역에서 이미 발송되지 않은 것을 확인했나요? 확인하면 문자가 발송되어 비용이 발생할 수 있습니다.')) return;
+      button.disabled = true;
+      try {
+        const result = await api(`/api/admin/bookings/${encodeURIComponent(button.dataset.retrySms)}/retry-sms`, { method: 'POST', body: '{}' });
+        if (result.notification === 'accepted') toast('확정 문자를 Solapi에 접수했습니다.');
+        else {
+          const message = result.notification === 'uncertain'
+            ? 'Solapi가 요청을 접수했는지 확인할 수 없습니다. 중복 발송 방지를 위해 재전송하지 않았습니다. Solapi 발송 내역을 확인해주세요.'
+            : `문자 재전송에 실패했습니다${result.notificationCode ? ` (오류 코드: ${escapeHtml(result.notificationCode)})` : ''}.`;
+          toast(message, { duration: 30000, copyable: true });
+        }
+        await renderAdmin();
+      } catch (error) {
+        button.disabled = false;
+        toast(error.message, { duration: 12000 });
+      }
     });
     view.querySelectorAll('[data-cancel]').forEach(button => button.onclick = async () => {
       const paid = button.dataset.status === 'paid';

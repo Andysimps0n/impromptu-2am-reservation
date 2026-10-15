@@ -630,6 +630,18 @@ button {
   color:#888;
 }
 
+.sms-status {
+  display:block;
+  margin-top:7px;
+  font-size:10px;
+  line-height:1.45;
+  color:#777;
+}
+
+.sms-status.sms-ok { color:#416a4c; }
+.sms-status.sms-failed { color:#a34f38; }
+.sms-status.sms-uncertain { color:#9a7130; }
+
 .admin-action {
   border:1px solid #cbd9cd;
   background:#f3f8f3;
