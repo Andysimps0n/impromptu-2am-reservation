@@ -40,8 +40,8 @@ if (args[0] === 'set-admin-password') {
   input = `${values.ADMIN_PASSWORD}\n`;
 }
 
-if (args[0] === 'set-kakao-secrets') {
-  const secretNames = ['SOLAPI_API_KEY', 'SOLAPI_API_SECRET', 'KAKAO_PF_ID', 'KAKAO_TEMPLATE_PENDING', 'KAKAO_TEMPLATE_CONFIRMED'];
+if (args[0] === 'set-sms-secrets') {
+  const secretNames = ['SOLAPI_API_KEY', 'SOLAPI_API_SECRET', 'SOLAPI_FROM_NUMBER'];
   const missing = secretNames.filter(name => !values[name]);
   if (missing.length) {
     console.error(`Set ${missing.join(', ')} in .env.cloudflare first.`);
@@ -61,7 +61,7 @@ if (args[0] === 'set-kakao-secrets') {
     }
     if (result.status !== 0) process.exit(result.status ?? 1);
   }
-  console.log('Kakao notification secrets uploaded.');
+  console.log('SMS notification secrets uploaded.');
   process.exit(0);
 }
 

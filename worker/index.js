@@ -7,11 +7,6 @@ const PRICE = 6500;
 const HOLD_MS = 30 * 60 * 1000;
 const ROWS = Array.from({ length: 12 }, (_, i) => String.fromCharCode(65 + i));
 const SHOWS = new Set(['1', '2', '3']);
-const SHOW_SCHEDULES = {
-  '1': '2026년 11월 21일 토요일 오후 8시',
-  '2': '2026년 11월 22일 일요일 오후 3시',
-  '3': '2026년 11월 22일 일요일 오후 9시',
-};
 const ALL_SEATS = ROWS.flatMap(row => Array.from({ length: row === 'L' ? 8 : 12 }, (_, i) => `${row}${String(i + 1).padStart(2, '0')}`));
 const RESERVED = new Set(ALL_SEATS.filter(seat => seat.startsWith('A')));
 const RESET_CONFIRMATION = '전체 예매 초기화';
@@ -60,9 +55,8 @@ const getBookingOpen = async db => {
   const setting = await db.prepare("SELECT value FROM site_settings WHERE key='booking_open'").first();
   return setting?.value !== 'closed';
 };
-const sendBookingAlimtalk = async (env, row, seats, stage) => {
-  const templateId = stage === 'pending' ? env.KAKAO_TEMPLATE_PENDING : env.KAKAO_TEMPLATE_CONFIRMED;
-  if (!env.SOLAPI_API_KEY || !env.SOLAPI_API_SECRET || !env.KAKAO_PF_ID || !templateId) return 'not_configured';
+const sendBookingConfirmationSms = async (env, row, seats) => {
+  if (!env.SOLAPI_API_KEY || !env.SOLAPI_API_SECRET || !env.SOLAPI_FROM_NUMBER) return 'not_configured';
 
   try {
     const date = new Date().toISOString();
@@ -71,33 +65,25 @@ const sendBookingAlimtalk = async (env, row, seats, stage) => {
     const signatureBytes = new Uint8Array(await crypto.subtle.sign('HMAC', key, new TextEncoder().encode(date + salt)));
     const signature = Array.from(signatureBytes, byte => byte.toString(16).padStart(2, '0')).join('');
     const auth = `HMAC-SHA256 apiKey=${env.SOLAPI_API_KEY}, date=${date}, salt=${salt}, signature=${signature}`;
-    const variables = {
-      '#{이름}': row.name,
-      '#{예약코드}': row.id,
-      '#{공연회차}': `${row.show_id}공`,
-      '#{공연일시}': SHOW_SCHEDULES[row.show_id] || SHOW_SCHEDULES['1'],
-      '#{좌석}': seats.join(', '),
-      '#{금액}': Number(row.amount).toLocaleString('ko-KR'),
-      '#{입금자명}': row.payer,
-    };
+    const text = `[즉흥적 새벽 2시] ${row.show_id}공 예매 확정 / 좌석 ${seats.join(',')} / 코드 ${row.id}`;
     const response = await fetch('https://api.solapi.com/messages/v4/send-many/detail', {
       method: 'POST',
       headers: { authorization: auth, 'content-type': 'application/json' },
-      body: JSON.stringify({ messages: [{ to: row.phone, kakaoOptions: { pfId: env.KAKAO_PF_ID, templateId, variables, disableSms: true } }], strict: true }),
+      body: JSON.stringify({ messages: [{ to: row.phone, from: env.SOLAPI_FROM_NUMBER.replace(/\D/g, ''), text, type: 'SMS', autoTypeDetect: false }], strict: true }),
       signal: AbortSignal.timeout(8000),
     });
     if (!response.ok) {
-      console.error('alimtalk_send_failed', { stage, status: response.status });
+      console.error('confirmation_sms_send_failed', { status: response.status });
       return 'failed';
     }
     const result = await response.json();
     if (result.failedMessageList?.length || Number(result.count?.registeredFailed || 0) > 0 || Number(result.count?.registeredSuccess ?? 1) < 1) {
-      console.error('alimtalk_send_failed', { stage, rejected: result.failedMessageList?.length || result.count?.registeredFailed || 0 });
+      console.error('confirmation_sms_send_failed', { rejected: result.failedMessageList?.length || result.count?.registeredFailed || 0 });
       return 'failed';
     }
     return 'accepted';
   } catch (error) {
-    console.error('alimtalk_send_failed', { stage, message: String(error?.message || error).slice(0, 160) });
+    console.error('confirmation_sms_send_failed', { message: String(error?.message || error).slice(0, 160) });
     return 'failed';
   }
 };
@@ -171,8 +157,7 @@ export default {
           if (/unique constraint|primary key|constraint failed/i.test(String(error?.message || error))) return json({ error: '선택한 좌석 중 이미 예약된 좌석이 있습니다. 좌석을 다시 선택해주세요.' }, 409);
           return json({ error: '예약 저장 중 문제가 발생했습니다. 잠시 후 다시 시도해주세요.' }, 503);
         }
-        const notification = await sendBookingAlimtalk(env, { id, show_id: showId, name, phone, payer, amount: seats.length * PRICE }, seats, 'pending');
-        return json({ id, seats, showId, amount: seats.length * PRICE, notification }, 201);
+        return json({ id, seats, showId, amount: seats.length * PRICE }, 201);
       }
       if (request.method === 'POST' && url.pathname === '/api/booking-lookup') {
         await cleanExpired(db);
@@ -247,7 +232,7 @@ export default {
         if (!result.meta.changes) return json({ error: '입금 대기 중인 예약을 찾지 못했습니다.' }, 404);
         const row = await db.prepare('SELECT * FROM bookings WHERE id=?').bind(confirm[1]).first();
         const seats = (await db.prepare('SELECT seat FROM booking_seats WHERE booking_id=? ORDER BY seat').bind(confirm[1]).all()).results.map(item => item.seat);
-        const notification = await sendBookingAlimtalk(env, row, seats, 'confirmed');
+        const notification = await sendBookingConfirmationSms(env, row, seats);
         return json({ confirmed: true, notification });
       }
       const cancel = /^\/api\/admin\/bookings\/([A-Z0-9-]+)\/cancel$/.exec(url.pathname);
