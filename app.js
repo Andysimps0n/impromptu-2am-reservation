@@ -1,3 +1,6 @@
+import QRCode from 'qrcode';
+import { Html5Qrcode } from 'html5-qrcode';
+
 const PRICE = 6500;
 const ROWS = Array.from({ length: 12 }, (_, row) => String.fromCharCode(65 + row));
 const SHOWS = ['1', '2', '3'];
@@ -12,6 +15,7 @@ let seatStates = {};
 let selectedShow = '1';
 let bookingOpen = false;
 const RESET_CONFIRMATION = '전체 예매 초기화';
+let activeQrScanner = null;
 
 async function api(path, options = {}) {
   const response = await fetch(path, {
@@ -123,7 +127,10 @@ async function refreshSeats() {
     showLocalSeatMap();
   }
 }
-function closeModal() { document.querySelector('#modal-root').innerHTML = ''; }
+function closeModal() {
+  stopQrScanner().catch(() => {});
+  document.querySelector('#modal-root').innerHTML = '';
+}
 function modal(content) {
   const root = document.querySelector('#modal-root');
   root.innerHTML = `<div class="modal-backdrop" id="backdrop"><div class="modal">${content}</div></div>`;
@@ -132,13 +139,13 @@ function modal(content) {
 }
 function showBookingSuccess(booking) {
   const details = showDetails(booking.showId || selectedShow);
-  modal(`<div class="success"><div class="check">✓</div><div class="eyebrow">REQUEST RECEIVED</div><h2>입금 대기 예약이 등록됐어요</h2><p>${booking.showId || selectedShow}공 · ${details.date} ${details.time}<br>아래 예약 코드를 입금 메모에 적어주세요.<br>입금 확인 전까지 좌석은 30분간 확보됩니다.</p><div class="code">${escapeHtml(booking.id)}</div><div style="margin:0 0 12px"><span class="badge">● 입금 대기</span></div><div class="bank-box" style="text-align:left"><strong>입금 계좌 안내</strong><br>카카오뱅크 <strong>3333376900284</strong><br>입금액 ${booking.amount.toLocaleString()}원 · 입금자명은 신청 내용과 동일하게</div><button class="primary" id="success-close">예약 정보 보기</button></div>`);
+  modal(`<div class="success"><div class="check">✓</div><div class="eyebrow">REQUEST RECEIVED</div><h2>입금 대기 예약이 등록됐어요</h2><p>${booking.showId || selectedShow}공 · ${details.date} ${details.time}<br>아래 예약 코드를 입금 메모에 적어주세요.<br>입금 확인 전까지 좌석은 30분간 확보됩니다.</p><div class="code">${escapeHtml(booking.id)}</div><div style="margin:0 0 12px"><span class="badge">● 입금 대기</span></div><div class="bank-box" style="text-align:left"><strong>입금 계좌 안내</strong><br>카카오뱅크 <strong>3333376900284</strong><br>입금액 ${booking.amount.toLocaleString()}원 · 입금자명은 신청 내용과 동일하게</div><p class="hint">예약이 확정되면 입력한 연락처로 문자 안내를 한 번 보내드립니다.</p><button class="primary" id="success-close">예약 정보 보기</button></div>`);
   document.querySelector('#success-close').onclick = () => openLookup(booking.id);
 }
 function openBooking() {
   if (!bookingOpen) return toast('현재 예매 접수 기간이 아닙니다.');
   const seats = [...selected].sort();
-  modal(`<button class="close" id="close-modal" aria-label="닫기">×</button><div class="eyebrow">BOOK YOUR SEAT</div><h2>예매 정보를 입력해주세요</h2><p class="sub">${selectedShow}공 · ${showDetails().date} ${showDetails().time}<br>${seats.join(', ')} · ${(seats.length * PRICE).toLocaleString()}원</p><div class="form-guidance"><strong>입력을 마치고 ‘입금 대기 예약하기’를 눌러주세요.</strong><span>이름과 입금자명을 적고, 연락처는 숫자 10~11자리로 입력하면 됩니다. 입력이 잘못된 칸은 아래에 안내해드려요.</span></div><form id="booking-form" novalidate><div class="form-grid"><div class="field"><label for="name">예매자 이름 <span>필수</span></label><input id="name" name="name" autocomplete="name" maxlength="40" placeholder="예: 홍길동" aria-describedby="name-help name-error"><small id="name-help" class="field-help">예매할 분의 이름을 입력해주세요.</small><small id="name-error" class="field-error" aria-live="polite"></small></div><div class="field"><label for="phone">연락처 <span>필수</span></label><input id="phone" name="phone" type="tel" inputmode="tel" autocomplete="tel" maxlength="20" placeholder="예: 010-1234-5678" aria-describedby="phone-help phone-error"><small id="phone-help" class="field-help">숫자만 또는 하이픈을 넣어 입력해도 됩니다. 예약 조회와 안내에 사용해요.</small><small id="phone-error" class="field-error" aria-live="polite"></small></div><div class="field"><label for="payer">입금자명 <span>필수</span></label><input id="payer" name="payer" autocomplete="name" maxlength="40" placeholder="예: 홍길동" aria-describedby="payer-help payer-error"><small id="payer-help" class="field-help">계좌에 실제로 송금할 분의 이름을 적어주세요.</small><small id="payer-error" class="field-error" aria-live="polite"></small></div></div><div class="bank-box"><strong>입금 계좌 안내</strong><br>카카오뱅크 <strong>3333376900284</strong><br>입금 기한: 예약 후 30분 이내</div><div id="booking-error" class="form-error-summary" role="alert" aria-live="assertive" hidden></div><button class="primary" id="booking-submit" type="submit">입금 대기 예약하기</button><p class="hint">연락처 하나당 최대 2석입니다. 입력한 연락처로 예약을 다시 조회할 수 있어요.</p></form>`);
+  modal(`<button class="close" id="close-modal" aria-label="닫기">×</button><div class="eyebrow">BOOK YOUR SEAT</div><h2>예매 정보를 입력해주세요</h2><p class="sub">${selectedShow}공 · ${showDetails().date} ${showDetails().time}<br>${seats.join(', ')} · ${(seats.length * PRICE).toLocaleString()}원</p><div class="form-guidance"><strong>입력을 마치고 ‘입금 대기 예약하기’를 눌러주세요.</strong><span>이름과 입금자명을 적고, 연락처는 숫자 10~11자리로 입력하면 됩니다. 입력이 잘못된 칸은 아래에 안내해드려요.</span></div><form id="booking-form" novalidate><div class="form-grid"><div class="field"><label for="name">예매자 이름 <span>필수</span></label><input id="name" name="name" autocomplete="name" maxlength="40" placeholder="예: 홍길동" aria-describedby="name-help name-error"><small id="name-help" class="field-help">예매할 분의 이름을 입력해주세요.</small><small id="name-error" class="field-error" aria-live="polite"></small></div><div class="field"><label for="phone">연락처 <span>필수</span></label><input id="phone" name="phone" type="tel" inputmode="tel" autocomplete="tel" maxlength="20" placeholder="예: 010-1234-5678" aria-describedby="phone-help phone-error"><small id="phone-help" class="field-help">예약 조회에 사용하며, 예매가 확정되면 안내 문자를 한 번 보내드립니다.</small><small id="phone-error" class="field-error" aria-live="polite"></small></div><div class="field"><label for="payer">입금자명 <span>필수</span></label><input id="payer" name="payer" autocomplete="name" maxlength="40" placeholder="예: 홍길동" aria-describedby="payer-help payer-error"><small id="payer-help" class="field-help">계좌에 실제로 송금할 분의 이름을 적어주세요.</small><small id="payer-error" class="field-error" aria-live="polite"></small></div></div><div class="bank-box"><strong>입금 계좌 안내</strong><br>카카오뱅크 <strong>3333376900284</strong><br>입금 기한: 예약 후 30분 이내</div><div id="booking-error" class="form-error-summary" role="alert" aria-live="assertive" hidden></div><button class="primary" id="booking-submit" type="submit">입금 대기 예약하기</button><p class="hint">연락처 하나당 최대 2석입니다. 입력한 연락처로 예약을 다시 조회할 수 있어요.</p></form>`);
   const formElement = document.querySelector('#booking-form');
   const errorText = field => {
     const value = formElement.elements[field].value.trim();
@@ -202,7 +209,80 @@ function showBookingResult(booking) {
   const status = ({ paid: '입금 확인 · 예매 확정', pending: '입금 대기', expired: '예약 만료', cancelled: '취소됨 · 입금 전 예약', refund_pending: '취소 접수 · 환불 처리 중', refunded: '환불 완료' })[booking.status] || '상태 확인 필요';
   const badge = ['paid', 'refunded'].includes(booking.status) ? 'badge paid' : ['expired', 'cancelled'].includes(booking.status) ? 'badge expired' : 'badge';
   const details = showDetails(booking.showId || '1');
-  modal(`<button class="close" id="close-modal">×</button><div class="eyebrow">BOOKING LOOKUP</div><h2>예약 내역</h2><p class="sub">예약 코드 ${escapeHtml(booking.id)}</p><div class="bank-box"><strong>${booking.showId || '1'}공 · ${details.date} ${details.time}</strong><br><strong>${escapeHtml(booking.name)} · 좌석 ${escapeHtml(booking.seats.join(', '))}</strong><br>${booking.amount.toLocaleString()}원 · 입금자 ${escapeHtml(booking.payer)}<br><span class="${badge}">${status}</span></div><p class="hint">예약 코드와 연락처로 언제든 다시 조회할 수 있어요.</p>`);
+  const tickets = booking.status === 'paid' ? (booking.tickets || []) : [];
+  const ticketMarkup = tickets.length ? `<section class="ticket-list"><h3>입장 QR 티켓</h3><p>입장할 때 좌석별 QR을 운영진에게 보여주세요.</p>${tickets.map((ticket, index) => `<article class="ticket-card"><canvas id="ticket-qr-${index}" aria-label="${escapeHtml(ticket.seat)} 입장 QR"></canvas><div><strong>${escapeHtml(ticket.seat)} 좌석</strong><span class="ticket-state ${ticket.status === 'checked_in' ? 'used' : ''}">${ticket.status === 'checked_in' ? '입장 완료' : '입장 전'}</span><small>${booking.showId || '1'}공 · ${details.date} ${details.time}</small></div></article>`).join('')}</section>` : booking.status === 'paid' ? '<p class="hint">티켓을 준비하고 있습니다. 잠시 후 예약을 다시 조회해주세요.</p>' : '';
+  modal(`<button class="close" id="close-modal">×</button><div class="eyebrow">BOOKING LOOKUP</div><h2>예약 내역</h2><p class="sub">예약 코드 ${escapeHtml(booking.id)}</p><div class="bank-box"><strong>${booking.showId || '1'}공 · ${details.date} ${details.time}</strong><br><strong>${escapeHtml(booking.name)} · 좌석 ${escapeHtml(booking.seats.join(', '))}</strong><br>${booking.amount.toLocaleString()}원 · 입금자 ${escapeHtml(booking.payer)}<br><span class="${badge}">${status}</span></div>${ticketMarkup}<p class="hint">예약 코드와 연락처로 언제든 다시 조회할 수 있어요.</p>`);
+  tickets.forEach((ticket, index) => {
+    const canvas = document.querySelector(`#ticket-qr-${index}`);
+    if (canvas) QRCode.toCanvas(canvas, `TKT:${ticket.id}`, { width: 180, margin: 1, errorCorrectionLevel: 'M' }).catch(() => {});
+  });
+}
+
+async function stopQrScanner() {
+  const scanner = activeQrScanner;
+  activeQrScanner = null;
+  if (!scanner) return;
+  try { if (scanner.isScanning) await scanner.stop(); } catch {}
+  try { scanner.clear(); } catch {}
+}
+
+function showCheckinResult(container, result, error = '') {
+  if (error) {
+    container.className = 'checkin-result invalid';
+    container.textContent = error;
+    return;
+  }
+  const ticket = result.ticket;
+  container.className = `checkin-result ${result.checkedIn ? 'valid' : 'invalid'}`;
+  container.textContent = `${result.checkedIn ? '입장 확인 완료' : '이미 입장 처리됨'} · ${ticket.showId}공 · ${ticket.seat} · ${ticket.name}`;
+}
+
+async function checkinTicket(input, container) {
+  try {
+    const result = await api('/api/admin/tickets/check-in', { method: 'POST', body: JSON.stringify(input) });
+    showCheckinResult(container, result);
+  } catch (error) {
+    showCheckinResult(container, null, error.message);
+  }
+}
+
+async function openCheckinScanner() {
+  await stopQrScanner();
+  modal(`<button class="close" id="close-modal" aria-label="닫기">×</button><div class="eyebrow">ENTRY CHECK</div><h2>입장 확인</h2><p class="sub">확정된 예약의 좌석별 QR을 스캔해주세요. 입장 처리는 한 번만 됩니다.</p><div id="qr-reader" class="qr-reader"></div><button class="admin-action scanner-start" id="scanner-start" type="button">카메라 스캔 시작</button><div id="checkin-result" class="checkin-result" role="status">카메라를 사용할 수 없으면 예약 코드와 좌석으로 확인할 수 있어요.</div><form id="manual-checkin" class="manual-checkin"><label for="manual-booking">수동 확인</label><div class="manual-checkin-row"><input id="manual-booking" autocomplete="off" placeholder="예약 코드 (예: STG-ABC1234567)" required><input id="manual-seat" autocomplete="off" placeholder="좌석 (예: B01)" required></div><button class="primary" type="submit">입장 확인 처리</button></form>`);
+  const result = document.querySelector('#checkin-result');
+  const button = document.querySelector('#scanner-start');
+  button.onclick = async () => {
+    if (activeQrScanner) {
+      await stopQrScanner();
+      button.textContent = '카메라 스캔 시작';
+      return;
+    }
+    button.disabled = true;
+    button.textContent = '카메라 연결 중…';
+    try {
+      const scanner = new Html5Qrcode('qr-reader', { verbose: false });
+      activeQrScanner = scanner;
+      await scanner.start({ facingMode: 'environment' }, { fps: 10, qrbox: { width: 230, height: 230 } }, async decoded => {
+        const id = /^TKT:([a-f0-9]{32})$/i.exec(decoded.trim())?.[1];
+        await stopQrScanner();
+        if (!id) showCheckinResult(result, null, '즉흥적 새벽 2시 티켓 QR이 아닙니다.');
+        else await checkinTicket({ ticketId: id }, result);
+        button.disabled = false;
+        button.textContent = '다시 스캔';
+      });
+      button.textContent = '스캔 중 · 카메라 중지';
+      button.disabled = false;
+    } catch {
+      await stopQrScanner();
+      button.disabled = false;
+      button.textContent = '카메라 스캔 다시 시도';
+      showCheckinResult(result, null, '카메라를 열 수 없습니다. HTTPS 연결과 브라우저 카메라 권한을 확인해주세요. 아래 수동 확인도 이용할 수 있습니다.');
+    }
+  };
+  document.querySelector('#manual-checkin').onsubmit = async event => {
+    event.preventDefault();
+    await checkinTicket({ bookingId: document.querySelector('#manual-booking').value, seat: document.querySelector('#manual-seat').value }, result);
+  };
 }
 function openLookup(prefill = '') {
   modal(`<button class="close" id="close-modal">×</button><div class="eyebrow">FIND YOUR BOOKING</div><h2>내 예약 조회</h2><p class="sub">예매할 때 입력한 연락처를 입력해주세요.</p><form id="lookup-form"><div class="form-grid"><div class="field"><label for="booking-code">예약 코드</label><input id="booking-code" name="id" required placeholder="STG-ABC123" value="${escapeHtml(prefill)}"></div><div class="field"><label for="lookup-phone">연락처</label><input id="lookup-phone" name="phone" required type="tel" placeholder="010-1234-5678"></div></div><button class="primary" type="submit">예약 조회하기</button><div id="lookup-error" class="error-text"></div></form>`);
@@ -248,6 +328,14 @@ async function renderAdmin() {
     const pending = orders.filter(order => order.status === 'pending').length;
     const paid = orders.filter(order => order.status === 'paid').reduce((sum, order) => sum + order.seats.length, 0);
     view.innerHTML = `<div class="admin-head"><div><div class="eyebrow">BACKSTAGE · ADMIN</div><h1>예매 관리</h1><p>입금 확인, 예약 취소와 환불 처리를 관리해주세요.</p></div><button id="admin-logout" class="admin-action">로그아웃</button></div><section class="panel booking-control"><div><div class="eyebrow">SITE STATUS</div><h2>사이트 예매 접수</h2><p>${bookingOpen ? '사이트가 열려 있어 모든 회차 예매를 받고 있습니다.' : '사이트가 닫혀 있어 방문자는 좌석을 선택하거나 예약할 수 없습니다.'}</p></div><div class="control-actions"><span class="site-status ${bookingOpen ? 'is-open' : 'is-closed'}">${bookingOpen ? '접수 중' : '접수 마감'}</span><button id="booking-toggle" class="admin-action ${bookingOpen ? 'danger' : ''}">${bookingOpen ? '예매 접수 닫기' : '예매 접수 열기'}</button></div></section><div class="show-picker admin-show-picker" role="group" aria-label="관리할 공연 선택">${SHOWS.map(show => `<button class="show-option ${selectedShow === show ? 'active' : ''}" data-show="${show}">${show}공</button>`).join('')}</div><div class="metrics"><div class="metric"><span>전체 예매</span><strong>${orders.length} <small>건</small></strong></div><div class="metric"><span>입금 확인 대기</span><strong>${pending} <small>건</small></strong></div><div class="metric"><span>확정된 좌석</span><strong>${paid} <small>석</small></strong></div></div><section class="panel orders"><div class="orders-top"><h2>${selectedShow}공 예매 신청 목록</h2><span>확정 취소 시 실제 환불 송금 후 완료 처리하세요</span></div><div id="orders-list">${orders.length ? orders.map(order => `<div class="order"><div class="order-name">${escapeHtml(order.name)}<small>${escapeHtml(order.id)} · ${new Date(order.createdAt).toLocaleString('ko-KR')}</small></div><div class="order-cell">${escapeHtml(order.seats.join(', '))}<small>${order.amount.toLocaleString()}원 · 입금자 ${escapeHtml(order.payer)}</small></div><div class="order-cell">${escapeHtml(order.phone)}<small>${order.seats.length}석</small></div><div><span class="badge ${({ paid: 'paid', expired: 'expired', cancelled: 'expired', refund_pending: '', refunded: 'expired' })[order.status] || ''}">${({ pending: '● 입금 대기', paid: '● 입금 확인', expired: '예약 만료', cancelled: '취소됨', refund_pending: '환불 처리 중', refunded: '환불 완료' })[order.status] || '상태 확인 필요'}</span></div><div class="order-actions">${order.status === 'pending' ? `<button class="admin-action" data-confirm="${escapeHtml(order.id)}">입금 확인</button>` : ''}${['pending', 'paid'].includes(order.status) ? `<button class="admin-action danger" data-cancel="${escapeHtml(order.id)}" data-status="${order.status}">예약 취소</button>` : ''}${order.status === 'refund_pending' ? `<button class="admin-action" data-refund-complete="${escapeHtml(order.id)}">환불 완료 처리</button>` : ''}</div></div>`).join('') : '<div class="empty-admin">이 공연에는 아직 예매 신청이 없습니다.</div>'}</div></section><section class="panel reset-panel"><div><h2>전체 예매 기록 초기화</h2><p>1·2·3공의 예약, 좌석 선점, 입금 상태를 모두 삭제합니다. 초기화한 데이터는 복구할 수 없습니다.</p></div><button id="reset-all" class="admin-action danger">전체 초기화</button></section>`;
+    const adminActions = view.querySelector('#admin-logout').parentElement;
+    adminActions.classList.add('admin-head-actions');
+    const checkinButton = document.createElement('button');
+    checkinButton.id = 'checkin-open';
+    checkinButton.className = 'admin-action';
+    checkinButton.textContent = '입장 확인 QR 스캔';
+    checkinButton.onclick = openCheckinScanner;
+    adminActions.prepend(checkinButton);
     view.querySelectorAll('[data-show]').forEach(button => button.onclick = async () => { selectedShow = button.dataset.show; await renderAdmin(); });
     document.querySelector('#admin-logout').onclick = async () => { await api('/api/admin/logout', { method: 'POST', body: '{}' }); await adminLoginScreen(); };
     document.querySelector('#booking-toggle').onclick = async event => {
@@ -262,7 +350,12 @@ async function renderAdmin() {
     };
     document.querySelector('#reset-all').onclick = () => openResetConfirmation();
     view.querySelectorAll('[data-confirm]').forEach(button => button.onclick = async () => {
-      try { await api(`/api/admin/bookings/${encodeURIComponent(button.dataset.confirm)}/confirm`, { method: 'POST', body: '{}' }); toast('입금 확인을 완료했습니다.'); await renderAdmin(); refreshSeats().catch(() => {}); }
+      try {
+        const result = await api(`/api/admin/bookings/${encodeURIComponent(button.dataset.confirm)}/confirm`, { method: 'POST', body: '{}' });
+        const notification = result.notification === 'accepted' ? ' 확정 안내 문자를 발송 요청했습니다.' : ' 문자가 설정되지 않았거나 발송에 실패했습니다.';
+        toast(`입금 확인을 완료했습니다.${notification}`);
+        await renderAdmin(); refreshSeats().catch(() => {});
+      }
       catch (error) { toast(error.message); }
     });
     view.querySelectorAll('[data-cancel]').forEach(button => button.onclick = async () => {

@@ -821,6 +821,132 @@ button {
   justify-content:space-between;
 }
 
+.admin-head-actions {
+  display:flex;
+  align-items:center;
+  gap:8px;
+}
+
+.ticket-list {
+  margin:18px 0 10px;
+  padding:16px;
+  border:1px solid var(--line);
+  border-radius:14px;
+  background:#fff;
+}
+
+.ticket-list h3 {
+  margin:0 0 4px;
+  font-size:14px;
+}
+
+.ticket-list > p {
+  margin:0 0 12px;
+  color:var(--muted);
+  font-size:11px;
+}
+
+.ticket-card {
+  display:flex;
+  align-items:center;
+  gap:14px;
+  padding:12px 0;
+  border-top:1px solid var(--line);
+}
+
+.ticket-card canvas {
+  display:block;
+  width:100px;
+  height:100px;
+  flex:none;
+}
+
+.ticket-card > div {
+  display:grid;
+  gap:6px;
+}
+
+.ticket-card strong { font-size:14px; }
+.ticket-card small { color:var(--muted); font-size:10px; }
+
+.ticket-state {
+  width:max-content;
+  border-radius:999px;
+  padding:4px 8px;
+  background:#edf4e9;
+  color:#456b38;
+  font-size:10px;
+  font-weight:700;
+}
+
+.ticket-state.used {
+  background:#eee;
+  color:#777;
+}
+
+.qr-reader {
+  width:min(100%,360px);
+  min-height:220px;
+  margin:0 auto 12px;
+  overflow:hidden;
+  border-radius:14px;
+  background:#111;
+}
+
+.qr-reader video { object-fit:cover; }
+.scanner-start { width:100%; }
+
+.checkin-result {
+  min-height:44px;
+  display:flex;
+  align-items:center;
+  padding:11px 13px;
+  margin:12px 0;
+  border-radius:10px;
+  background:#f1f0e9;
+  color:var(--muted);
+  font-size:12px;
+  line-height:1.5;
+}
+
+.checkin-result.valid {
+  background:#e7f2e4;
+  color:#315f2b;
+  font-weight:700;
+}
+
+.checkin-result.invalid {
+  background:#fff0e9;
+  color:#99432f;
+  font-weight:700;
+}
+
+.manual-checkin label {
+  display:block;
+  margin-bottom:8px;
+  font-size:12px;
+  font-weight:700;
+}
+
+.manual-checkin-row {
+  display:grid;
+  grid-template-columns:minmax(0,1fr) 90px;
+  gap:8px;
+}
+
+.manual-checkin input {
+  min-width:0;
+  border:1px solid var(--line);
+  border-radius:9px;
+  padding:11px;
+  font-size:12px;
+}
+
+@media (max-width:600px) {
+  .admin-head-actions { align-items:flex-end; flex-direction:column-reverse; }
+  .ticket-list { padding:12px; }
+}
+
 .hidden {
   display:none!important;
 }
