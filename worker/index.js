@@ -33,6 +33,7 @@ const readBody = async request => {
 const bookingRow = async (db, row) => ({
   id: row.id, showId: row.show_id || '1', name: row.name, phone: maskPhone(row.phone), payer: row.payer,
   seats: (await db.prepare('SELECT seat FROM booking_seats WHERE booking_id=? ORDER BY seat').bind(row.id).all()).results.map(x => x.seat),
+  tickets: row.status === 'paid' ? (await db.prepare('SELECT id,seat,status,checked_in_at FROM tickets WHERE booking_id=? ORDER BY seat').bind(row.id).all()).results.map(ticket => ({ id: ticket.id, seat: ticket.seat, status: ticket.status, checkedInAt: ticket.checked_in_at })) : [],
   amount: row.amount, status: row.status, createdAt: row.created_at,
 });
 const requireAdmin = async (request, env) => {
@@ -100,6 +101,20 @@ const ensureShowSchema = async db => {
     WHERE b.status IN ('pending','paid','refund_pending')`).run();
   await db.prepare('CREATE TABLE IF NOT EXISTS site_settings (key TEXT PRIMARY KEY, value TEXT NOT NULL)').run();
   await db.prepare("INSERT OR IGNORE INTO site_settings(key,value) VALUES('booking_open','open')").run();
+  await db.prepare(`CREATE TABLE IF NOT EXISTS tickets (
+    id TEXT PRIMARY KEY,
+    booking_id TEXT NOT NULL REFERENCES bookings(id) ON DELETE CASCADE,
+    show_id TEXT NOT NULL,
+    seat TEXT NOT NULL,
+    status TEXT NOT NULL DEFAULT 'valid',
+    checked_in_at INTEGER,
+    UNIQUE (booking_id, seat)
+  )`).run();
+  const missingTickets = (await db.prepare(`SELECT b.id AS booking_id,b.show_id,s.seat FROM bookings b
+    JOIN booking_seats s ON s.booking_id=b.id
+    WHERE b.status='paid' AND NOT EXISTS (SELECT 1 FROM tickets t WHERE t.booking_id=b.id AND t.seat=s.seat)`).all()).results;
+  if (missingTickets.length) await db.batch(missingTickets.map(ticket => db.prepare('INSERT OR IGNORE INTO tickets(id,booking_id,show_id,seat) VALUES(?,?,?,?)')
+    .bind(Array.from(crypto.getRandomValues(new Uint8Array(16)), byte => byte.toString(16).padStart(2, '0')).join(''), ticket.booking_id, ticket.show_id || '1', ticket.seat)));
 };
 
 export default {
@@ -160,6 +175,7 @@ export default {
         return json({ id, seats, showId, amount: seats.length * PRICE }, 201);
       }
       if (request.method === 'POST' && url.pathname === '/api/booking-lookup') {
+        await ensureShowSchema(db);
         await cleanExpired(db);
         const input = await readBody(request);
         const id = String(input.id || '').trim().toUpperCase();
@@ -218,6 +234,7 @@ export default {
         if (input.confirmation !== RESET_CONFIRMATION) return json({ error: `확인 문구가 일치하지 않습니다. 정확히 “${RESET_CONFIRMATION}”을 입력해주세요.` }, 400);
         const total = await db.prepare('SELECT COUNT(*) AS count FROM bookings').first();
         await db.batch([
+          db.prepare('DELETE FROM tickets'),
           db.prepare('DELETE FROM performance_seat_locks'),
           db.prepare('DELETE FROM seat_locks'),
           db.prepare('DELETE FROM booking_seats'),
@@ -228,12 +245,46 @@ export default {
       const confirm = /^\/api\/admin\/bookings\/([A-Z0-9-]+)\/confirm$/.exec(url.pathname);
       if (request.method === 'POST' && confirm) {
         if (!await requireAdmin(request, env)) return json({ error: '운영진 로그인이 필요합니다.' }, 401);
-        const result = await db.prepare("UPDATE bookings SET status='paid' WHERE id=? AND status='pending'").bind(confirm[1]).run();
-        if (!result.meta.changes) return json({ error: '입금 대기 중인 예약을 찾지 못했습니다.' }, 404);
-        const row = await db.prepare('SELECT * FROM bookings WHERE id=?').bind(confirm[1]).first();
+        await ensureShowSchema(db);
+        const row = await db.prepare("SELECT * FROM bookings WHERE id=? AND status='pending'").bind(confirm[1]).first();
+        if (!row) return json({ error: '입금 대기 중인 예약을 찾지 못했습니다.' }, 404);
         const seats = (await db.prepare('SELECT seat FROM booking_seats WHERE booking_id=? ORDER BY seat').bind(confirm[1]).all()).results.map(item => item.seat);
+        const ticketRows = seats.map(seat => ({ id: Array.from(crypto.getRandomValues(new Uint8Array(16)), byte => byte.toString(16).padStart(2, '0')).join(''), seat }));
+        const statements = [db.prepare("UPDATE bookings SET status='paid' WHERE id=? AND status='pending'").bind(confirm[1])];
+        for (const ticket of ticketRows) statements.push(db.prepare(`INSERT INTO tickets(id,booking_id,show_id,seat)
+          SELECT ?,?,?,? WHERE EXISTS (SELECT 1 FROM bookings WHERE id=? AND status='paid')
+          AND NOT EXISTS (SELECT 1 FROM tickets WHERE booking_id=? AND seat=?)`).bind(ticket.id, row.id, row.show_id || '1', ticket.seat, row.id, row.id, ticket.seat));
+        const results = await db.batch(statements);
+        if (!results[0]?.meta?.changes) return json({ error: '입금 대기 중인 예약을 찾지 못했습니다.' }, 404);
         const notification = await sendBookingConfirmationSms(env, row, seats);
         return json({ confirmed: true, notification });
+      }
+      if (request.method === 'POST' && url.pathname === '/api/admin/tickets/check-in') {
+        if (!await requireAdmin(request, env)) return json({ error: '운영진 로그인이 필요합니다.' }, 401);
+        await ensureShowSchema(db);
+        const input = await readBody(request);
+        const ticketId = String(input.ticketId || '').trim().toLowerCase();
+        const bookingId = String(input.bookingId || '').trim().toUpperCase();
+        const seat = String(input.seat || '').trim().toUpperCase();
+        let ticket;
+        if (/^[a-f0-9]{32}$/.test(ticketId)) {
+          ticket = await db.prepare(`SELECT t.id,t.seat,t.show_id,t.status,t.checked_in_at,b.id AS booking_id,b.name,b.status AS booking_status
+            FROM tickets t JOIN bookings b ON b.id=t.booking_id WHERE t.id=?`).bind(ticketId).first();
+        } else if (/^STG-[A-Z0-9]+$/.test(bookingId) && /^[A-L](?:0[1-9]|1[0-2])$/.test(seat)) {
+          ticket = await db.prepare(`SELECT t.id,t.seat,t.show_id,t.status,t.checked_in_at,b.id AS booking_id,b.name,b.status AS booking_status
+            FROM tickets t JOIN bookings b ON b.id=t.booking_id WHERE b.id=? AND t.seat=?`).bind(bookingId, seat).first();
+        }
+        if (!ticket) return json({ error: '해당 티켓을 찾지 못했습니다. 예약 코드와 좌석을 확인해주세요.' }, 404);
+        if (ticket.booking_status !== 'paid') return json({ error: '취소되었거나 확정되지 않은 예약의 티켓입니다.' }, 409);
+        if (ticket.status === 'checked_in') return json({ error: '이미 입장 처리된 티켓입니다.', alreadyCheckedIn: true, ticket: { name: ticket.name, showId: ticket.show_id, seat: ticket.seat, checkedInAt: ticket.checked_in_at } }, 409);
+        const checkedInAt = Date.now();
+        const result = await db.prepare("UPDATE tickets SET status='checked_in',checked_in_at=? WHERE id=? AND status='valid'").bind(checkedInAt, ticket.id).run();
+        if (!result.meta.changes) {
+          const latest = await db.prepare('SELECT status,checked_in_at FROM tickets WHERE id=?').bind(ticket.id).first();
+          if (latest?.status === 'checked_in') return json({ error: '이미 입장 처리된 티켓입니다.', alreadyCheckedIn: true, ticket: { name: ticket.name, showId: ticket.show_id, seat: ticket.seat, checkedInAt: latest.checked_in_at } }, 409);
+          return json({ error: '입장 처리 상태가 변경되었습니다. 티켓을 다시 확인해주세요.' }, 409);
+        }
+        return json({ checkedIn: true, ticket: { name: ticket.name, showId: ticket.show_id, seat: ticket.seat, checkedInAt } });
       }
       const cancel = /^\/api\/admin\/bookings\/([A-Z0-9-]+)\/cancel$/.exec(url.pathname);
       if (request.method === 'POST' && cancel) {

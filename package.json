@@ -14,6 +14,11 @@
     "set:cloudflare-sms-secrets": "node scripts/cloudflare.mjs set-sms-secrets"
   },
   "devDependencies": {
+    "esbuild": "^0.28.2",
     "wrangler": "^4.151.0"
+  },
+  "dependencies": {
+    "html5-qrcode": "^2.3.8",
+    "qrcode": "^1.5.4"
   }
 }
