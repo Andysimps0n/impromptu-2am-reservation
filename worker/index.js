@@ -24,6 +24,11 @@ const safeEqual = (a, b) => {
   return diff === 0;
 };
 const tokenHash = async token => Array.from(new Uint8Array(await crypto.subtle.digest('SHA-256', new TextEncoder().encode(token))), b => b.toString(16).padStart(2, '0')).join('');
+const createTicketAccessToken = () => {
+  const bytes = crypto.getRandomValues(new Uint8Array(16));
+  const binary = Array.from(bytes, byte => String.fromCharCode(byte)).join('');
+  return btoa(binary).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/g, '');
+};
 const readBody = async request => {
   const text = await request.text();
   if (text.length > 12000) { const error = new Error('요청이 너무 큽니다.'); error.status = 413; throw error; }
@@ -60,7 +65,7 @@ const getBookingOpen = async db => {
   const setting = await db.prepare("SELECT value FROM site_settings WHERE key='booking_open'").first();
   return setting?.value !== 'closed';
 };
-const sendBookingConfirmationSms = async (env, row, seats) => {
+const sendBookingConfirmationSms = async (env, row, ticketUrl) => {
   if (!env.SOLAPI_API_KEY || !env.SOLAPI_API_SECRET || !env.SOLAPI_FROM_NUMBER) return { status: 'not_configured' };
 
   try {
@@ -70,7 +75,8 @@ const sendBookingConfirmationSms = async (env, row, seats) => {
     const signatureBytes = new Uint8Array(await crypto.subtle.sign('HMAC', key, new TextEncoder().encode(date + salt)));
     const signature = Array.from(signatureBytes, byte => byte.toString(16).padStart(2, '0')).join('');
     const auth = `HMAC-SHA256 apiKey=${env.SOLAPI_API_KEY}, date=${date}, salt=${salt}, signature=${signature}`;
-    const text = `[즉흥적 새벽 2시] ${row.show_id}공 예매 확정 / 좌석 ${seats.join(',')} / 코드 ${row.id}`;
+    const text = `QR: ${ticketUrl}`;
+    if (new TextEncoder().encode(text).length > 90) return { status: 'failed', errorCode: 'SMS_LENGTH_OVER_90_BYTES' };
     const response = await fetch('https://api.solapi.com/messages/v4/send-many/detail', {
       method: 'POST',
       headers: { authorization: auth, 'content-type': 'application/json' },
@@ -105,10 +111,12 @@ const ensureShowSchema = async db => {
     'ALTER TABLE bookings ADD COLUMN notification_attempts INTEGER NOT NULL DEFAULT 0',
     'ALTER TABLE bookings ADD COLUMN notification_error_code TEXT',
     'ALTER TABLE bookings ADD COLUMN notification_updated_at INTEGER',
+    'ALTER TABLE bookings ADD COLUMN ticket_access_hash TEXT',
   ]) {
     try { await db.prepare(sql).run(); }
     catch (error) { if (!/duplicate column/i.test(String(error?.message || error))) throw error; }
   }
+  await db.prepare('CREATE UNIQUE INDEX IF NOT EXISTS bookings_ticket_access_hash_unique ON bookings(ticket_access_hash) WHERE ticket_access_hash IS NOT NULL').run();
   await db.prepare(`CREATE TABLE IF NOT EXISTS performance_seat_locks (
     show_id TEXT NOT NULL, seat TEXT NOT NULL,
     booking_id TEXT NOT NULL REFERENCES bookings(id) ON DELETE CASCADE,
@@ -202,6 +210,17 @@ export default {
         if (!row) return json({ error: '예약 정보가 일치하지 않습니다. 예약 코드와 연락처를 확인해주세요.' }, 404);
         return json(await bookingRow(db, row));
       }
+      if (request.method === 'POST' && url.pathname === '/api/ticket-link') {
+        await ensureShowSchema(db);
+        const input = await readBody(request);
+        const token = String(input.token || '').trim();
+        if (!/^[A-Za-z0-9_-]{22}$/.test(token)) return json({ error: '입장 QR 링크가 올바르지 않습니다.' }, 404);
+        const access = await db.prepare("SELECT id,show_id FROM bookings WHERE ticket_access_hash=? AND status='paid'").bind(await tokenHash(token)).first();
+        if (!access) return json({ error: '입장 QR 링크가 유효하지 않거나 취소된 예약입니다.' }, 404);
+        const tickets = (await db.prepare('SELECT id,seat,status,checked_in_at FROM tickets WHERE booking_id=? ORDER BY seat').bind(access.id).all()).results;
+        if (!tickets.length) return json({ error: '이 예약의 QR 티켓을 찾지 못했습니다.' }, 404);
+        return json({ showId: access.show_id || '1', tickets });
+      }
       if (request.method === 'GET' && url.pathname === '/api/admin/session') return json({ authenticated: await requireAdmin(request, env) });
       if (request.method === 'POST' && url.pathname === '/api/admin/login') {
         if (!env.ADMIN_USERNAME || !env.ADMIN_PASSWORD) return json({ error: '관리자 계정이 서버에 설정되지 않았습니다.' }, 503);
@@ -266,16 +285,19 @@ export default {
         await ensureShowSchema(db);
         const row = await db.prepare("SELECT * FROM bookings WHERE id=? AND status='pending'").bind(confirm[1]).first();
         if (!row) return json({ error: '입금 대기 중인 예약을 찾지 못했습니다.' }, 404);
+        const ticketAccessToken = createTicketAccessToken();
+        const ticketAccessHash = await tokenHash(ticketAccessToken);
         const seats = (await db.prepare('SELECT seat FROM booking_seats WHERE booking_id=? ORDER BY seat').bind(confirm[1]).all()).results.map(item => item.seat);
         const ticketRows = seats.map(seat => ({ id: Array.from(crypto.getRandomValues(new Uint8Array(16)), byte => byte.toString(16).padStart(2, '0')).join(''), seat }));
-        const statements = [db.prepare(`UPDATE bookings SET status='paid',notification_status='sending',notification_attempts=notification_attempts+1,notification_error_code=NULL,notification_updated_at=?
-          WHERE id=? AND status='pending'`).bind(Date.now(), confirm[1])];
+        const statements = [db.prepare(`UPDATE bookings SET status='paid',notification_status='sending',notification_attempts=notification_attempts+1,notification_error_code=NULL,notification_updated_at=?,ticket_access_hash=?
+          WHERE id=? AND status='pending'`).bind(Date.now(), ticketAccessHash, confirm[1])];
         for (const ticket of ticketRows) statements.push(db.prepare(`INSERT INTO tickets(id,booking_id,show_id,seat)
           SELECT ?,?,?,? WHERE EXISTS (SELECT 1 FROM bookings WHERE id=? AND status='paid')
           AND NOT EXISTS (SELECT 1 FROM tickets WHERE booking_id=? AND seat=?)`).bind(ticket.id, row.id, row.show_id || '1', ticket.seat, row.id, row.id, ticket.seat));
         const results = await db.batch(statements);
         if (!results[0]?.meta?.changes) return json({ error: '입금 대기 중인 예약을 찾지 못했습니다.' }, 404);
-        const notification = await sendBookingConfirmationSms(env, row, seats);
+        const ticketUrl = `${url.origin}/#t=${ticketAccessToken}`;
+        const notification = await sendBookingConfirmationSms(env, row, ticketUrl);
         await recordSmsResult(db, row.id, notification);
         return json({ confirmed: true, notification: notification.status, notificationCode: notification.errorCode || '' });
       }
@@ -284,9 +306,11 @@ export default {
         if (!await requireAdmin(request, env)) return json({ error: '운영진 로그인이 필요합니다.' }, 401);
         await ensureShowSchema(db);
         const bookingId = retrySms[1];
+        const ticketAccessToken = createTicketAccessToken();
+        const ticketAccessHash = await tokenHash(ticketAccessToken);
         const claim = await db.prepare(`UPDATE bookings SET notification_status='sending',notification_attempts=notification_attempts+1,
-          notification_error_code=NULL,notification_updated_at=?
-          WHERE id=? AND status='paid' AND notification_status IN ('failed','not_configured','untracked')`).bind(Date.now(), bookingId).run();
+          notification_error_code=NULL,notification_updated_at=?,ticket_access_hash=?
+          WHERE id=? AND status='paid' AND notification_status IN ('failed','not_configured','untracked')`).bind(Date.now(), ticketAccessHash, bookingId).run();
         if (!claim.meta?.changes) {
           const row = await db.prepare('SELECT status,notification_status FROM bookings WHERE id=?').bind(bookingId).first();
           if (!row) return json({ error: '예약을 찾지 못했습니다.' }, 404);
@@ -295,7 +319,8 @@ export default {
         }
         const row = await db.prepare("SELECT * FROM bookings WHERE id=? AND status='paid'").bind(bookingId).first();
         const seats = (await db.prepare('SELECT seat FROM booking_seats WHERE booking_id=? ORDER BY seat').bind(bookingId).all()).results.map(item => item.seat);
-        const notification = await sendBookingConfirmationSms(env, row, seats);
+        const ticketUrl = `${url.origin}/#t=${ticketAccessToken}`;
+        const notification = await sendBookingConfirmationSms(env, row, ticketUrl);
         await recordSmsResult(db, bookingId, notification);
         const attempts = (await db.prepare('SELECT notification_attempts FROM bookings WHERE id=?').bind(bookingId).first())?.notification_attempts || 0;
         return json({ notification: notification.status, notificationCode: notification.errorCode || '', notificationAttempts: attempts });

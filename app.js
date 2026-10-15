@@ -235,6 +235,26 @@ function showBookingResult(booking) {
     if (canvas) QRCode.toCanvas(canvas, `TKT:${ticket.id}`, { width: 180, margin: 1, errorCorrectionLevel: 'M' }).catch(() => {});
   });
 }
+function showLinkedTicketResult(data) {
+  const details = showDetails(data.showId || '1');
+  const tickets = data.tickets || [];
+  if (!tickets.length) throw new Error('이 예약의 QR 티켓을 찾지 못했습니다.');
+  modal(`<button class="close" id="close-modal" aria-label="닫기">×</button><div class="eyebrow">ENTRY TICKET</div><h2>입장 QR 티켓</h2><p class="sub">${escapeHtml(data.showId || '1')}공 · ${details.date} ${details.time}<br>입장할 때 좌석별 QR을 운영진에게 보여주세요.</p><section class="ticket-list">${tickets.map((ticket, index) => `<article class="ticket-card"><canvas id="linked-ticket-qr-${index}" aria-label="${escapeHtml(ticket.seat)} 입장 QR"></canvas><div><strong>${escapeHtml(ticket.seat)} 좌석</strong><span class="ticket-state ${ticket.status === 'checked_in' ? 'used' : ''}">${ticket.status === 'checked_in' ? '입장 완료' : '입장 전'}</span></div></article>`).join('')}</section><p class="hint">링크를 가진 사람은 티켓 QR을 볼 수 있으니 다른 사람과 공유하지 마세요.</p>`);
+  tickets.forEach((ticket, index) => {
+    const canvas = document.querySelector(`#linked-ticket-qr-${index}`);
+    if (canvas) QRCode.toCanvas(canvas, `TKT:${ticket.id}`, { width: 220, margin: 1, errorCorrectionLevel: 'M' }).catch(() => {});
+  });
+}
+async function openTicketLinkFromHash() {
+  const match = /^#t=([A-Za-z0-9_-]{22})$/.exec(location.hash);
+  if (!match) return;
+  try {
+    const result = await api('/api/ticket-link', { method: 'POST', body: JSON.stringify({ token: match[1] }) });
+    showLinkedTicketResult(result);
+  } catch (error) {
+    modal(`<button class="close" id="close-modal" aria-label="닫기">×</button><div class="eyebrow">ENTRY TICKET</div><h2>QR 링크를 열 수 없습니다</h2><p class="sub">${escapeHtml(error.message)}</p><p class="hint">예약이 취소됐거나 링크에 문제가 있다면 공연 계정으로 문의해주세요.</p>`);
+  }
+}
 
 async function stopQrScanner() {
   const scanner = activeQrScanner;
@@ -486,6 +506,7 @@ document.querySelectorAll('[data-booking-show]').forEach(button => button.addEve
   await refreshSeats();
 }));
 updateShowDetails();
+openTicketLinkFromHash();
 document.querySelector('#lookup-open').onclick = () => openLookup();
 document.querySelector('#hero-book')?.addEventListener('click', () => {
   document.querySelector('.seat-panel')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
