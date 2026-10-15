@@ -10,7 +10,8 @@
     "build:cloudflare": "node scripts/build-site.mjs",
     "deploy:cloudflare": "npm run build:cloudflare && node scripts/cloudflare.mjs deploy",
     "migrate:cloudflare": "node scripts/cloudflare.mjs d1 migrations apply DB --remote",
-    "set:cloudflare-admin-password": "node scripts/cloudflare.mjs set-admin-password"
+    "set:cloudflare-admin-password": "node scripts/cloudflare.mjs set-admin-password",
+    "set:cloudflare-kakao-secrets": "node scripts/cloudflare.mjs set-kakao-secrets"
   },
   "devDependencies": {
     "wrangler": "^4.151.0"
