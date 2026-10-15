@@ -524,6 +524,37 @@ button {
   margin-bottom:20px;
 }
 
+.checkin-dashboard {
+  padding:22px 24px 18px;
+  margin-bottom:20px;
+}
+
+.checkin-heading, .checkin-progress > div:first-child {
+  display:flex;
+  align-items:center;
+  justify-content:space-between;
+  gap:16px;
+}
+
+.checkin-heading h2 { margin:5px 0 0; font-size:17px; }
+.checkin-progress { margin:22px 0 20px; }
+.checkin-progress strong { font-size:30px; letter-spacing:-1px; }
+.checkin-progress span { margin-left:6px; color:var(--muted); font-size:12px; }
+.checkin-progress b { color:var(--green); font-size:13px; }
+.checkin-track, .checkin-row-track { overflow:hidden; background:#edf0e9; border-radius:20px; }
+.checkin-track { height:10px; margin-top:9px; }
+.checkin-track i, .checkin-row-track i { display:block; height:100%; background:var(--green); border-radius:inherit; }
+.checkin-columns { display:grid; grid-template-columns:1fr 1fr; gap:30px; border-top:1px solid var(--line); padding-top:18px; }
+.checkin-columns h3 { margin:0 0 12px; font-size:12px; }
+.checkin-row { display:grid; grid-template-columns:34px 1fr 48px; align-items:center; gap:10px; margin:8px 0; font-size:11px; }
+.checkin-row-track { height:7px; }
+.checkin-row strong { text-align:right; font-size:10px; color:var(--muted); }
+.checkin-recent { display:flex; flex-wrap:wrap; gap:7px; }
+.checkin-recent-item { display:flex; gap:9px; align-items:center; border:1px solid var(--line); border-radius:8px; padding:7px 9px; font-size:11px; }
+.checkin-recent-item time { color:var(--muted); font-size:10px; }
+.checkin-empty, .checkin-note { color:var(--muted); font-size:11px; }
+.checkin-note { margin:16px 0 0; }
+
 .metric {
   background:var(--cream);
   border:1px solid var(--line);
@@ -862,6 +893,27 @@ button {
   background:#fff;
 }
 
+.event-ticket-info {
+  display:grid;
+  gap:5px;
+  margin:16px 0 12px;
+  padding:15px 16px;
+  border:1px solid #d8e3d5;
+  border-radius:13px;
+  background:#f0f6ed;
+  color:var(--green);
+}
+.event-ticket-info strong { font-size:11px; }
+.event-ticket-info b { font-size:17px; letter-spacing:-.3px; }
+.event-ticket-info span { color:#647263; font-size:11px; }
+.linked-ticket-list { padding:12px 16px 14px; }
+.linked-ticket-card { justify-content:center; border-top:0; padding:6px 0 14px; }
+.linked-ticket-card canvas.ticket-qr-canvas, .linked-ticket-card canvas { width:220px; height:220px; }
+.ticket-nav { display:grid; grid-template-columns:1fr auto 1fr; align-items:center; gap:10px; border-top:1px solid var(--line); padding-top:12px; }
+.ticket-nav button:last-child { justify-self:end; }
+.ticket-nav span { color:var(--muted); font-size:11px; font-weight:700; }
+.ticket-nav .admin-action:disabled { opacity:.42; cursor:not-allowed; }
+
 .ticket-list h3 {
   margin:0 0 4px;
   font-size:14px;
@@ -971,6 +1023,9 @@ button {
 
 @media (max-width:600px) {
   .admin-head-actions { align-items:flex-end; flex-direction:column-reverse; }
+  .checkin-dashboard { padding:18px 15px 15px; }
+  .checkin-columns { grid-template-columns:1fr; gap:20px; }
+  .checkin-heading h2 { font-size:15px; }
   .ticket-list { padding:12px; }
 }
 

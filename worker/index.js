@@ -75,12 +75,11 @@ const sendBookingConfirmationSms = async (env, row, ticketUrl) => {
     const signatureBytes = new Uint8Array(await crypto.subtle.sign('HMAC', key, new TextEncoder().encode(date + salt)));
     const signature = Array.from(signatureBytes, byte => byte.toString(16).padStart(2, '0')).join('');
     const auth = `HMAC-SHA256 apiKey=${env.SOLAPI_API_KEY}, date=${date}, salt=${salt}, signature=${signature}`;
-    const text = `QR: ${ticketUrl}`;
-    if (new TextEncoder().encode(text).length > 90) return { status: 'failed', errorCode: 'SMS_LENGTH_OVER_90_BYTES' };
+    const text = `즉흥적 새벽 2시의 How’d you feel? 공연 입장 QR 링크입니다.\n공연 티켓 확인용 공식 링크입니다. 입장할 때 아래 QR을 보여주세요.\n\n${ticketUrl}`;
     const response = await fetch('https://api.solapi.com/messages/v4/send-many/detail', {
       method: 'POST',
       headers: { authorization: auth, 'content-type': 'application/json' },
-      body: JSON.stringify({ messages: [{ to: row.phone, from: env.SOLAPI_FROM_NUMBER.replace(/\D/g, ''), text, type: 'SMS', autoTypeDetect: false }], strict: true }),
+      body: JSON.stringify({ messages: [{ to: row.phone, from: env.SOLAPI_FROM_NUMBER.replace(/\D/g, ''), text, type: 'LMS', autoTypeDetect: false }], strict: true }),
       signal: AbortSignal.timeout(8000),
     });
     const result = await response.json().catch(() => ({}));
@@ -245,6 +244,24 @@ export default {
         const token = cookieToken(request);
         if (token) await db.prepare('DELETE FROM admin_sessions WHERE token_hash=?').bind(await tokenHash(token)).run();
         return json({ authenticated: false }, 200, { 'set-cookie': 'stage_admin=; HttpOnly; Secure; SameSite=Strict; Path=/; Max-Age=0' });
+      }
+      if (request.method === 'GET' && url.pathname === '/api/admin/checkin-summary') {
+        if (!await requireAdmin(request, env)) return json({ error: '운영진 로그인이 필요합니다.' }, 401);
+        const showId = url.searchParams.get('show') || '1';
+        if (!SHOWS.has(showId)) return json({ error: '공연 회차를 확인해주세요.' }, 400);
+        const totals = await db.prepare(`SELECT COUNT(*) AS total,
+          SUM(CASE WHEN t.status='checked_in' THEN 1 ELSE 0 END) AS checked_in
+          FROM tickets t JOIN bookings b ON b.id=t.booking_id
+          WHERE t.show_id=? AND b.status='paid'`).bind(showId).first();
+        const rows = (await db.prepare(`SELECT substr(t.seat,1,1) AS row,
+          COUNT(*) AS total, SUM(CASE WHEN t.status='checked_in' THEN 1 ELSE 0 END) AS checked_in
+          FROM tickets t JOIN bookings b ON b.id=t.booking_id
+          WHERE t.show_id=? AND b.status='paid' GROUP BY substr(t.seat,1,1) ORDER BY row`).bind(showId).all()).results;
+        const recent = (await db.prepare(`SELECT t.seat,t.checked_in_at
+          FROM tickets t JOIN bookings b ON b.id=t.booking_id
+          WHERE t.show_id=? AND b.status='paid' AND t.status='checked_in'
+          ORDER BY t.checked_in_at DESC LIMIT 8`).bind(showId).all()).results;
+        return json({ total: totals?.total || 0, checkedIn: totals?.checked_in || 0, rows, recent });
       }
       if (request.method === 'GET' && url.pathname === '/api/admin/bookings') {
         if (!await requireAdmin(request, env)) return json({ error: '운영진 로그인이 필요합니다.' }, 401);
