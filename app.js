@@ -16,6 +16,7 @@ let selectedShow = '1';
 let bookingOpen = false;
 const RESET_CONFIRMATION = '전체 예매 초기화';
 let activeQrScanner = null;
+let toastTimer = null;
 
 async function api(path, options = {}) {
   const response = await fetch(path, {
@@ -37,10 +38,27 @@ async function api(path, options = {}) {
 function escapeHtml(value) {
   return String(value).replace(/[&<>"']/g, char => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[char]);
 }
-function toast(message) {
+function toast(message, { duration = 6500, copyable = false } = {}) {
   const root = document.querySelector('#toast-root');
-  root.innerHTML = `<div class="toast">${escapeHtml(message)}</div>`;
-  setTimeout(() => { root.innerHTML = ''; }, 2800);
+  clearTimeout(toastTimer);
+  root.innerHTML = `<div class="toast">${escapeHtml(message)}${copyable ? '<button class="toast-copy" type="button">오류 내용 복사</button>' : ''}</div>`;
+  if (copyable) root.querySelector('.toast-copy').onclick = async event => {
+    const button = event.currentTarget;
+    try {
+      await navigator.clipboard.writeText(message);
+    } catch {
+      const field = document.createElement('textarea');
+      field.value = message;
+      field.style.position = 'fixed';
+      field.style.opacity = '0';
+      document.body.append(field);
+      field.select();
+      document.execCommand('copy');
+      field.remove();
+    }
+    button.textContent = '복사했습니다';
+  };
+  toastTimer = setTimeout(() => { root.innerHTML = ''; }, duration);
 }
 function showDetails(show = selectedShow) { return SHOW_DETAILS[show]; }
 function updateShowDetails() {
@@ -357,7 +375,8 @@ async function renderAdmin() {
           : result.notification === 'not_configured'
             ? ' 문자 발송 설정이 빠져 있습니다.'
             : ` 문자 발송에 실패했습니다${result.notificationCode ? ` (오류 코드: ${escapeHtml(result.notificationCode)})` : ''}. Cloudflare Worker 로그에서 상세 원인을 확인해주세요.`;
-        toast(`입금 확인을 완료했습니다.${notification}`);
+        const message = `입금 확인을 완료했습니다.${notification}`;
+        toast(message, result.notification === 'failed' ? { duration: 30000, copyable: true } : {});
         await renderAdmin(); refreshSeats().catch(() => {});
       }
       catch (error) { toast(error.message); }
