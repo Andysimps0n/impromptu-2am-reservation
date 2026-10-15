@@ -1,8 +1,10 @@
 const PRICE = 12000;
 const ROWS = Array.from({ length: 12 }, (_, row) => String.fromCharCode(65 + row));
-const SEATS = ROWS.flatMap(row => Array.from({ length: 12 }, (_, index) => `${row}${String(index + 1).padStart(2, '0')}`));
+const SHOWS = ['1', '2', '3'];
+const SEATS = ROWS.flatMap(row => Array.from({ length: row === 'L' ? 8 : 12 }, (_, index) => `${row}${String(index + 1).padStart(2, '0')}`));
 let selected = new Set();
 let seatStates = {};
+let selectedShow = '1';
 
 async function api(path, options = {}) {
   const response = await fetch(path, {
@@ -28,13 +30,14 @@ function renderSeats() {
   grid.innerHTML = '';
   ROWS.forEach(rowLetter => {
     const row = document.createElement('div');
-    row.className = 'seat-row';
+    row.className = `seat-row ${rowLetter === 'L' ? 'short-row' : ''}`;
     const label = document.createElement('span');
     label.className = 'row-label';
     label.textContent = rowLetter;
     row.append(label);
-    for (let column = 1; column <= 12; column += 1) {
-      if (column === 7) {
+    const count = rowLetter === 'L' ? 8 : 12;
+    for (let column = 1; column <= count; column += 1) {
+      if (column === (count === 8 ? 5 : 7)) {
         const aisle = document.createElement('span');
         aisle.className = 'aisle';
         aisle.setAttribute('aria-hidden', 'true');
@@ -76,7 +79,7 @@ function renderSelection() {
   button.textContent = seats.length ? `${seats.length}석 예매 신청하기` : '좌석을 선택해주세요';
 }
 async function refreshSeats() {
-  const result = await api('/api/seats');
+  const result = await api(`/api/seats?show=${selectedShow}`);
   seatStates = result.seats;
   for (const seat of selected) if (seatStates[seat] !== 'available') selected.delete(seat);
   renderSeats();
@@ -105,7 +108,7 @@ function openBooking() {
     errorMessage.textContent = '';
     const form = new FormData(event.currentTarget);
     try {
-      const booking = await api('/api/bookings', { method: 'POST', body: JSON.stringify({ name: form.get('name'), phone: form.get('phone'), payer: form.get('payer'), seats }) });
+      const booking = await api('/api/bookings', { method: 'POST', body: JSON.stringify({ name: form.get('name'), phone: form.get('phone'), payer: form.get('payer'), seats, showId: selectedShow }) });
       selected.clear();
       refreshSeats().catch(() => {});
       showBookingSuccess(booking);
@@ -152,11 +155,12 @@ async function renderAdmin() {
     const session = await api('/api/admin/session');
     if (!session.authenticated) return adminLoginScreen();
     view.dataset.authenticated = 'true';
-    const data = await api('/api/admin/bookings');
+    const data = await api(`/api/admin/bookings?show=${selectedShow}`);
     const orders = data.bookings;
     const pending = orders.filter(order => order.status === 'pending').length;
     const paid = orders.filter(order => order.status === 'paid').reduce((sum, order) => sum + order.seats.length, 0);
-    view.innerHTML = `<div class="admin-head"><div><div class="eyebrow">BACKSTAGE · ADMIN</div><h1>예매 관리</h1><p>입금 확인, 예약 취소와 환불 처리를 관리해주세요.</p></div><button id="admin-logout" class="admin-action">로그아웃</button></div><div class="metrics"><div class="metric"><span>전체 예매</span><strong>${orders.length} <small>건</small></strong></div><div class="metric"><span>입금 확인 대기</span><strong>${pending} <small>건</small></strong></div><div class="metric"><span>확정된 좌석</span><strong>${paid} <small>석</small></strong></div></div><section class="panel orders"><div class="orders-top"><h2>예매 신청 목록</h2><span>확정 취소 시 실제 환불 송금 후 완료 처리하세요</span></div><div id="orders-list">${orders.length ? orders.map(order => `<div class="order"><div class="order-name">${escapeHtml(order.name)}<small>${escapeHtml(order.id)} · ${new Date(order.createdAt).toLocaleString('ko-KR')}</small></div><div class="order-cell">${escapeHtml(order.seats.join(', '))}<small>${order.amount.toLocaleString()}원 · 입금자 ${escapeHtml(order.payer)}</small></div><div class="order-cell">${escapeHtml(order.phone)}<small>${order.seats.length}석</small></div><div><span class="badge ${({ paid: 'paid', expired: 'expired', cancelled: 'expired', refund_pending: '', refunded: 'expired' })[order.status] || ''}">${({ pending: '● 입금 대기', paid: '● 입금 확인', expired: '예약 만료', cancelled: '취소됨', refund_pending: '환불 처리 중', refunded: '환불 완료' })[order.status] || '상태 확인 필요'}</span></div><div class="order-actions">${order.status === 'pending' ? `<button class="admin-action" data-confirm="${escapeHtml(order.id)}">입금 확인</button>` : ''}${['pending', 'paid'].includes(order.status) ? `<button class="admin-action danger" data-cancel="${escapeHtml(order.id)}" data-status="${order.status}">예약 취소</button>` : ''}${order.status === 'refund_pending' ? `<button class="admin-action" data-refund-complete="${escapeHtml(order.id)}">환불 완료 처리</button>` : ''}</div></div>`).join('') : '<div class="empty-admin">아직 예매 신청이 없습니다.</div>'}</div></section>`;
+    view.innerHTML = `<div class="admin-head"><div><div class="eyebrow">BACKSTAGE · ADMIN</div><h1>예매 관리</h1><p>입금 확인, 예약 취소와 환불 처리를 관리해주세요.</p></div><button id="admin-logout" class="admin-action">로그아웃</button></div><div class="show-picker admin-show-picker" role="group" aria-label="관리할 공연 선택">${SHOWS.map(show => `<button class="show-option ${selectedShow === show ? 'active' : ''}" data-show="${show}">${show}공</button>`).join('')}</div><div class="metrics"><div class="metric"><span>전체 예매</span><strong>${orders.length} <small>건</small></strong></div><div class="metric"><span>입금 확인 대기</span><strong>${pending} <small>건</small></strong></div><div class="metric"><span>확정된 좌석</span><strong>${paid} <small>석</small></strong></div></div><section class="panel orders"><div class="orders-top"><h2>${selectedShow}공 예매 신청 목록</h2><span>확정 취소 시 실제 환불 송금 후 완료 처리하세요</span></div><div id="orders-list">${orders.length ? orders.map(order => `<div class="order"><div class="order-name">${escapeHtml(order.name)}<small>${escapeHtml(order.id)} · ${new Date(order.createdAt).toLocaleString('ko-KR')}</small></div><div class="order-cell">${escapeHtml(order.seats.join(', '))}<small>${order.amount.toLocaleString()}원 · 입금자 ${escapeHtml(order.payer)}</small></div><div class="order-cell">${escapeHtml(order.phone)}<small>${order.seats.length}석</small></div><div><span class="badge ${({ paid: 'paid', expired: 'expired', cancelled: 'expired', refund_pending: '', refunded: 'expired' })[order.status] || ''}">${({ pending: '● 입금 대기', paid: '● 입금 확인', expired: '예약 만료', cancelled: '취소됨', refund_pending: '환불 처리 중', refunded: '환불 완료' })[order.status] || '상태 확인 필요'}</span></div><div class="order-actions">${order.status === 'pending' ? `<button class="admin-action" data-confirm="${escapeHtml(order.id)}">입금 확인</button>` : ''}${['pending', 'paid'].includes(order.status) ? `<button class="admin-action danger" data-cancel="${escapeHtml(order.id)}" data-status="${order.status}">예약 취소</button>` : ''}${order.status === 'refund_pending' ? `<button class="admin-action" data-refund-complete="${escapeHtml(order.id)}">환불 완료 처리</button>` : ''}</div></div>`).join('') : '<div class="empty-admin">이 공연에는 아직 예매 신청이 없습니다.</div>'}</div></section>`;
+    view.querySelectorAll('[data-show]').forEach(button => button.onclick = async () => { selectedShow = button.dataset.show; await renderAdmin(); });
     document.querySelector('#admin-logout').onclick = async () => { await api('/api/admin/logout', { method: 'POST', body: '{}' }); await adminLoginScreen(); };
     view.querySelectorAll('[data-confirm]').forEach(button => button.onclick = async () => {
       try { await api(`/api/admin/bookings/${encodeURIComponent(button.dataset.confirm)}/confirm`, { method: 'POST', body: '{}' }); toast('입금 확인을 완료했습니다.'); await renderAdmin(); refreshSeats().catch(() => {}); }
@@ -193,6 +197,12 @@ document.querySelectorAll('.tab').forEach(tab => tab.addEventListener('click', a
   if (isAdmin) await renderAdmin();
 }));
 document.querySelector('#book-button').onclick = openBooking;
+document.querySelectorAll('[data-booking-show]').forEach(button => button.addEventListener('click', async () => {
+  selectedShow = button.dataset.bookingShow;
+  selected.clear();
+  document.querySelectorAll('[data-booking-show]').forEach(item => item.classList.toggle('active', item === button));
+  await refreshSeats();
+}));
 document.querySelector('#lookup-open').onclick = () => openLookup();
 refreshSeats().catch(error => toast(`좌석 정보를 불러오지 못했습니다: ${error.message}`));
 setInterval(() => { if (!document.querySelector('#booking-view').classList.contains('hidden')) refreshSeats().catch(() => {}); }, 12000);

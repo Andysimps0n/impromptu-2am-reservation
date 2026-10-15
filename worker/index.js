@@ -3,7 +3,8 @@ const APP_JS = __APP_JS__;
 const PRICE = 12000;
 const HOLD_MS = 30 * 60 * 1000;
 const ROWS = Array.from({ length: 12 }, (_, i) => String.fromCharCode(65 + i));
-const ALL_SEATS = ROWS.flatMap(row => Array.from({ length: 12 }, (_, i) => `${row}${String(i + 1).padStart(2, '0')}`));
+const SHOWS = new Set(['1', '2', '3']);
+const ALL_SEATS = ROWS.flatMap(row => Array.from({ length: row === 'L' ? 8 : 12 }, (_, i) => `${row}${String(i + 1).padStart(2, '0')}`));
 const RESERVED = new Set(ALL_SEATS.filter(seat => seat.startsWith('A')));
 
 const json = (data, status = 200, headers = {}) => new Response(JSON.stringify(data), {
@@ -21,11 +22,12 @@ const safeEqual = (a, b) => {
 const tokenHash = async token => Array.from(new Uint8Array(await crypto.subtle.digest('SHA-256', new TextEncoder().encode(token))), b => b.toString(16).padStart(2, '0')).join('');
 const readBody = async request => {
   const text = await request.text();
-  if (text.length > 12000) throw new Error('요청이 너무 큽니다.');
-  return JSON.parse(text || '{}');
+  if (text.length > 12000) { const error = new Error('요청이 너무 큽니다.'); error.status = 413; throw error; }
+  try { return JSON.parse(text || '{}'); }
+  catch { const error = new Error('요청 형식을 확인해주세요.'); error.status = 400; throw error; }
 };
 const bookingRow = async (db, row) => ({
-  id: row.id, name: row.name, phone: maskPhone(row.phone), payer: row.payer,
+  id: row.id, showId: row.show_id || '1', name: row.name, phone: maskPhone(row.phone), payer: row.payer,
   seats: (await db.prepare('SELECT seat FROM booking_seats WHERE booking_id=? ORDER BY seat').bind(row.id).all()).results.map(x => x.seat),
   amount: row.amount, status: row.status, createdAt: row.created_at,
 });
@@ -42,7 +44,20 @@ const cleanExpired = async db => {
   if (ids.length) await db.batch(ids.flatMap(({ id }) => [
     db.prepare("UPDATE bookings SET status='expired' WHERE id=? AND status='pending'").bind(id),
     db.prepare('DELETE FROM seat_locks WHERE booking_id=?').bind(id),
+    db.prepare('DELETE FROM performance_seat_locks WHERE booking_id=?').bind(id),
   ]));
+};
+const ensureShowSchema = async db => {
+  try { await db.prepare("ALTER TABLE bookings ADD COLUMN show_id TEXT NOT NULL DEFAULT '1'").run(); }
+  catch (error) { if (!/duplicate column/i.test(String(error?.message || error))) throw error; }
+  await db.prepare(`CREATE TABLE IF NOT EXISTS performance_seat_locks (
+    show_id TEXT NOT NULL, seat TEXT NOT NULL,
+    booking_id TEXT NOT NULL REFERENCES bookings(id) ON DELETE CASCADE,
+    PRIMARY KEY (show_id, seat), UNIQUE (booking_id, seat)
+  )`).run();
+  await db.prepare(`INSERT OR IGNORE INTO performance_seat_locks(show_id,seat,booking_id)
+    SELECT b.show_id,s.seat,s.booking_id FROM booking_seats s JOIN bookings b ON b.id=s.booking_id
+    WHERE b.status IN ('pending','paid','refund_pending')`).run();
 };
 
 export default {
@@ -53,31 +68,41 @@ export default {
       if (request.method === 'GET' && url.pathname === '/') return new Response(INDEX_HTML, { headers: { 'content-type': 'text/html; charset=utf-8', 'cache-control': 'no-store' } });
       if (request.method === 'GET' && url.pathname === '/app.js') return new Response(APP_JS, { headers: { 'content-type': 'text/javascript; charset=utf-8', 'cache-control': 'no-store' } });
       if (request.method === 'GET' && url.pathname === '/api/seats') {
+        const showId = url.searchParams.get('show') || '1';
+        if (!SHOWS.has(showId)) return json({ error: '공연 회차를 확인해주세요.' }, 400);
+        await ensureShowSchema(db);
         await cleanExpired(db);
         const states = Object.fromEntries(ALL_SEATS.map(seat => [seat, RESERVED.has(seat) ? 'reserved' : 'available']));
-        const booked = (await db.prepare("SELECT l.seat,b.status FROM seat_locks l JOIN bookings b ON b.id=l.booking_id WHERE b.status IN ('pending','paid','refund_pending')").all()).results;
+        const booked = (await db.prepare("SELECT l.seat,b.status FROM performance_seat_locks l JOIN bookings b ON b.id=l.booking_id WHERE l.show_id=? AND b.status IN ('pending','paid','refund_pending')").bind(showId).all()).results;
         for (const row of booked) states[row.seat] = row.status === 'paid' ? 'sold' : row.status === 'refund_pending' ? 'refund_pending' : 'held';
         return json({ seats: states, price: PRICE });
       }
       if (request.method === 'POST' && url.pathname === '/api/bookings') {
+        await ensureShowSchema(db);
         await cleanExpired(db);
         const input = await readBody(request);
+        const showId = String(input.showId || '1');
+        if (!SHOWS.has(showId)) return json({ error: '공연 회차를 확인해주세요.' }, 400);
         const seats = [...new Set(Array.isArray(input.seats) ? input.seats : [])].sort();
         const phone = normalizePhone(input.phone);
         const name = String(input.name || '').trim();
         const payer = String(input.payer || '').trim();
         if (!name || name.length > 40 || !payer || payer.length > 40 || phone.length < 10 || phone.length > 11 || seats.length < 1 || seats.length > 2 || seats.some(seat => !ALL_SEATS.includes(seat))) return json({ error: '입력 정보나 좌석을 확인해주세요.' }, 400);
         if (seats.some(seat => RESERVED.has(seat))) return json({ error: 'A열은 운영진 보유석으로 예매할 수 없습니다.' }, 400);
-        const existing = await db.prepare("SELECT COUNT(*) AS count FROM booking_seats s JOIN bookings b ON b.id=s.booking_id WHERE b.phone=? AND b.status IN ('pending','paid','refund_pending')").bind(phone).first();
+        const existing = await db.prepare("SELECT COUNT(*) AS count FROM booking_seats s JOIN bookings b ON b.id=s.booking_id WHERE b.phone=? AND b.show_id=? AND b.status IN ('pending','paid','refund_pending')").bind(phone, showId).first();
         if (existing.count + seats.length > 2) return json({ error: '연락처 하나당 최대 2석까지 예매할 수 있습니다.' }, 429);
         const id = `STG-${Array.from(crypto.getRandomValues(new Uint8Array(5)), b => b.toString(16).padStart(2, '0')).join('').toUpperCase()}`;
         const createdAt = Date.now();
-        const statements = [db.prepare("INSERT INTO bookings(id,name,phone,payer,amount,status,created_at) VALUES(?,?,?,?,?,'pending',?)").bind(id, name, phone, payer, seats.length * PRICE, createdAt)];
+        const statements = [db.prepare("INSERT INTO bookings(id,name,phone,payer,amount,status,created_at,show_id) VALUES(?,?,?,?,?,'pending',?,?)").bind(id, name, phone, payer, seats.length * PRICE, createdAt, showId)];
         for (const seat of seats) statements.push(db.prepare('INSERT INTO booking_seats(seat,booking_id) VALUES(?,?)').bind(seat, id));
-        for (const seat of seats) statements.push(db.prepare('INSERT INTO seat_locks(seat,booking_id) VALUES(?,?)').bind(seat, id));
+        for (const seat of seats) statements.push(db.prepare('INSERT INTO performance_seat_locks(show_id,seat,booking_id) VALUES(?,?,?)').bind(showId, seat, id));
         try { await db.batch(statements); }
-        catch { return json({ error: '선택한 좌석 중 이미 예약된 좌석이 있습니다. 좌석을 다시 선택해주세요.' }, 409); }
-        return json({ id, seats, amount: seats.length * PRICE }, 201);
+        catch (error) {
+          console.error('booking_write_failed', { message: String(error?.message || error).slice(0, 240) });
+          if (/unique constraint|primary key|constraint failed/i.test(String(error?.message || error))) return json({ error: '선택한 좌석 중 이미 예약된 좌석이 있습니다. 좌석을 다시 선택해주세요.' }, 409);
+          return json({ error: '예약 저장 중 문제가 발생했습니다. 잠시 후 다시 시도해주세요.' }, 503);
+        }
+        return json({ id, seats, showId, amount: seats.length * PRICE }, 201);
       }
       if (request.method === 'POST' && url.pathname === '/api/booking-lookup') {
         await cleanExpired(db);
@@ -115,8 +140,11 @@ export default {
       }
       if (request.method === 'GET' && url.pathname === '/api/admin/bookings') {
         if (!await requireAdmin(request, env)) return json({ error: '운영진 로그인이 필요합니다.' }, 401);
+        await ensureShowSchema(db);
         await cleanExpired(db);
-        const rows = (await db.prepare('SELECT * FROM bookings ORDER BY created_at DESC').all()).results;
+        const showId = url.searchParams.get('show') || '1';
+        if (!SHOWS.has(showId)) return json({ error: '공연 회차를 확인해주세요.' }, 400);
+        const rows = (await db.prepare('SELECT * FROM bookings WHERE show_id=? ORDER BY created_at DESC').bind(showId).all()).results;
         return json({ bookings: await Promise.all(rows.map(row => bookingRow(db, row))) });
       }
       const confirm = /^\/api\/admin\/bookings\/([A-Z0-9-]+)\/confirm$/.exec(url.pathname);
@@ -132,7 +160,10 @@ export default {
         if (!row || !['pending', 'paid'].includes(row.status)) return json({ error: '취소할 수 있는 예약을 찾지 못했습니다.' }, 404);
         const next = row.status === 'paid' ? 'refund_pending' : 'cancelled';
         const statements = [db.prepare('UPDATE bookings SET status=? WHERE id=?').bind(next, cancel[1])];
-        if (next === 'cancelled') statements.push(db.prepare('DELETE FROM seat_locks WHERE booking_id=?').bind(cancel[1]));
+        if (next === 'cancelled') {
+          statements.push(db.prepare('DELETE FROM seat_locks WHERE booking_id=?').bind(cancel[1]));
+          statements.push(db.prepare('DELETE FROM performance_seat_locks WHERE booking_id=?').bind(cancel[1]));
+        }
         await db.batch(statements);
         return json({ status: next });
       }
@@ -142,13 +173,15 @@ export default {
         const result = await db.prepare("UPDATE bookings SET status='refunded' WHERE id=? AND status='refund_pending'").bind(refund[1]).run();
         if (!result.meta.changes) return json({ error: '환불 처리 중인 예약을 찾지 못했습니다.' }, 404);
         await db.prepare('DELETE FROM seat_locks WHERE booking_id=?').bind(refund[1]).run();
+        await db.prepare('DELETE FROM performance_seat_locks WHERE booking_id=?').bind(refund[1]).run();
         return json({ status: 'refunded' });
       }
       if (request.method === 'GET') return new Response('페이지를 찾지 못했습니다.', { status: 404 });
       return json({ error: '요청을 처리할 수 없습니다.' }, 404);
     } catch (error) {
       if (String(error?.message || '').includes('no such table')) return json({ error: '데이터베이스가 아직 준비되지 않았습니다.' }, 503);
-      return json({ error: '요청을 처리하지 못했습니다.' }, 400);
+      console.error('request_failed', { path: url.pathname, message: String(error?.message || error).slice(0, 240) });
+      return json({ error: error?.status ? error.message : '서버에서 요청을 처리하지 못했습니다. 잠시 후 다시 시도해주세요.' }, error?.status || 500);
     }
   },
 };
