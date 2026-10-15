@@ -6,6 +6,7 @@ const ROWS = Array.from({ length: 12 }, (_, i) => String.fromCharCode(65 + i));
 const SHOWS = new Set(['1', '2', '3']);
 const ALL_SEATS = ROWS.flatMap(row => Array.from({ length: row === 'L' ? 8 : 12 }, (_, i) => `${row}${String(i + 1).padStart(2, '0')}`));
 const RESERVED = new Set(ALL_SEATS.filter(seat => seat.startsWith('A')));
+const RESET_CONFIRMATION = '전체 예매 초기화';
 
 const json = (data, status = 200, headers = {}) => new Response(JSON.stringify(data), {
   status,
@@ -47,6 +48,10 @@ const cleanExpired = async db => {
     db.prepare('DELETE FROM performance_seat_locks WHERE booking_id=?').bind(id),
   ]));
 };
+const getBookingOpen = async db => {
+  const setting = await db.prepare("SELECT value FROM site_settings WHERE key='booking_open'").first();
+  return setting?.value !== 'closed';
+};
 const ensureShowSchema = async db => {
   try { await db.prepare("ALTER TABLE bookings ADD COLUMN show_id TEXT NOT NULL DEFAULT '1'").run(); }
   catch (error) { if (!/duplicate column/i.test(String(error?.message || error))) throw error; }
@@ -58,6 +63,8 @@ const ensureShowSchema = async db => {
   await db.prepare(`INSERT OR IGNORE INTO performance_seat_locks(show_id,seat,booking_id)
     SELECT b.show_id,s.seat,s.booking_id FROM booking_seats s JOIN bookings b ON b.id=s.booking_id
     WHERE b.status IN ('pending','paid','refund_pending')`).run();
+  await db.prepare('CREATE TABLE IF NOT EXISTS site_settings (key TEXT PRIMARY KEY, value TEXT NOT NULL)').run();
+  await db.prepare("INSERT OR IGNORE INTO site_settings(key,value) VALUES('booking_open','open')").run();
 };
 
 export default {
@@ -75,10 +82,11 @@ export default {
         const states = Object.fromEntries(ALL_SEATS.map(seat => [seat, RESERVED.has(seat) ? 'reserved' : 'available']));
         const booked = (await db.prepare("SELECT l.seat,b.status FROM performance_seat_locks l JOIN bookings b ON b.id=l.booking_id WHERE l.show_id=? AND b.status IN ('pending','paid','refund_pending')").bind(showId).all()).results;
         for (const row of booked) states[row.seat] = row.status === 'paid' ? 'sold' : row.status === 'refund_pending' ? 'refund_pending' : 'held';
-        return json({ seats: states, price: PRICE });
+        return json({ seats: states, price: PRICE, bookingOpen: await getBookingOpen(db) });
       }
       if (request.method === 'POST' && url.pathname === '/api/bookings') {
         await ensureShowSchema(db);
+        if (!await getBookingOpen(db)) return json({ error: '현재는 예매 접수 기간이 아닙니다. 공지된 예매 기간에 다시 방문해주세요.' }, 423);
         await cleanExpired(db);
         const input = await readBody(request);
         const showId = String(input.showId || '1');
@@ -148,7 +156,30 @@ export default {
         const showId = url.searchParams.get('show') || '1';
         if (!SHOWS.has(showId)) return json({ error: '공연 회차를 확인해주세요.' }, 400);
         const rows = (await db.prepare('SELECT * FROM bookings WHERE show_id=? ORDER BY created_at DESC').bind(showId).all()).results;
-        return json({ bookings: await Promise.all(rows.map(row => bookingRow(db, row))) });
+        return json({ bookings: await Promise.all(rows.map(row => bookingRow(db, row))), bookingOpen: await getBookingOpen(db) });
+      }
+      if (request.method === 'POST' && url.pathname === '/api/admin/settings') {
+        if (!await requireAdmin(request, env)) return json({ error: '운영진 로그인이 필요합니다.' }, 401);
+        await ensureShowSchema(db);
+        const input = await readBody(request);
+        if (typeof input.bookingOpen !== 'boolean') return json({ error: '예매 접수 설정을 확인해주세요.' }, 400);
+        const value = input.bookingOpen ? 'open' : 'closed';
+        await db.prepare("INSERT INTO site_settings(key,value) VALUES('booking_open',?) ON CONFLICT(key) DO UPDATE SET value=excluded.value").bind(value).run();
+        return json({ bookingOpen: input.bookingOpen });
+      }
+      if (request.method === 'POST' && url.pathname === '/api/admin/reset') {
+        if (!await requireAdmin(request, env)) return json({ error: '운영진 로그인이 필요합니다.' }, 401);
+        await ensureShowSchema(db);
+        const input = await readBody(request);
+        if (input.confirmation !== RESET_CONFIRMATION) return json({ error: `확인 문구가 일치하지 않습니다. 정확히 “${RESET_CONFIRMATION}”을 입력해주세요.` }, 400);
+        const total = await db.prepare('SELECT COUNT(*) AS count FROM bookings').first();
+        await db.batch([
+          db.prepare('DELETE FROM performance_seat_locks'),
+          db.prepare('DELETE FROM seat_locks'),
+          db.prepare('DELETE FROM booking_seats'),
+          db.prepare('DELETE FROM bookings'),
+        ]);
+        return json({ reset: true, deletedBookings: total?.count || 0 });
       }
       const confirm = /^\/api\/admin\/bookings\/([A-Z0-9-]+)\/confirm$/.exec(url.pathname);
       if (request.method === 'POST' && confirm) {
