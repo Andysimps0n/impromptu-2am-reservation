@@ -1,0 +1,18 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "impromptu-2am-ticketing",
+  "main": "dist/server/index.js",
+  "compatibility_date": "2026-10-15",
+  "workers_dev": true,
+  "vars": {
+    "ADMIN_USERNAME": "admin"
+  },
+  "d1_databases": [
+    {
+      "binding": "DB",
+      "database_name": "impromptu-2am-ticketing",
+      "database_id": "d42e1d17-0177-4a1b-bdce-8e13a8685535",
+      "migrations_dir": "drizzle"
+    }
+  ]
+}

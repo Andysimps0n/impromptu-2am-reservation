@@ -9,4 +9,16 @@ Sites의 Cloudflare Worker와 D1을 사용해 배포합니다. 예매 데이터�
 
 `npm run build`는 HTML과 브라우저 코드를 Worker 파일에 묶습니다. DB 구조는 `drizzle/0001_initial.sql`에서 관리합니다.
 
+## Cloudflare 배포
+
+Worker와 D1을 배포하려면 Cloudflare API 토큰과 계정 ID를 로컬 `.env.cloudflare`에 설정합니다. 템플릿은 `cloudflare.env.example`이며, 비밀값 파일은 Git에서 제외됩니다. 토큰은 해당 계정의 Workers Scripts 편집, D1 편집, Account Settings 읽기 권한만 부여하세요.
+
+```sh
+npm run migrate:cloudflare
+npm run set:cloudflare-admin-password
+npm run deploy:cloudflare
+```
+
+`ADMIN_PASSWORD`는 로컬 설정 파일에만 입력하고 저장소에 커밋하지 마세요. 마이그레이션은 새 Cloudflare D1 데이터베이스에 적용됩니다.
+
 로컬 SQLite의 기존 예약은 배포 DB로 복사하지 않습니다. QA 기록과 개인정보가 섞일 수 있어 배포 DB는 비어 있는 상태로 시작합니다.
