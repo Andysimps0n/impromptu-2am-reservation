@@ -14,6 +14,7 @@ let selected = new Set();
 let seatStates = {};
 let selectedShow = '1';
 let bookingOpen = false;
+let bookingUnavailable = false;
 const RESET_CONFIRMATION = '전체 예매 초기화';
 let activeQrScanner = null;
 let toastTimer = null;
@@ -121,28 +122,36 @@ function renderSelection() {
   document.querySelector('#total').textContent = (seats.length * PRICE).toLocaleString() + '원';
   const button = document.querySelector('#book-button');
   button.disabled = !seats.length || !bookingOpen;
-  button.textContent = !bookingOpen ? '현재 예매가 마감되었습니다' : seats.length ? `${seats.length}석 예매 신청하기` : '좌석을 선택해주세요';
+  button.textContent = bookingUnavailable ? '좌석 정보를 확인할 수 없습니다' : !bookingOpen ? '현재 예매가 마감되었습니다' : seats.length ? `${seats.length}석 예매 신청하기` : '좌석을 선택해주세요';
 }
-function showLocalSeatMap() {
-  seatStates = Object.fromEntries(SEATS.map(seat => [seat, seat.startsWith('A') ? 'reserved' : 'available']));
-  bookingOpen = true;
-  const closedBanner = document.querySelector('#booking-closed-banner');
-  if (closedBanner) closedBanner.hidden = true;
-  renderSeats();
-  renderSelection();
-}
-async function refreshSeats() {
+async function refreshSeats(showId = selectedShow) {
   try {
-    const result = await api(`/api/seats?show=${selectedShow}`);
+    const result = await api(`/api/seats?show=${showId}`);
+    if (showId !== selectedShow) return;
     seatStates = result.seats;
     bookingOpen = result.bookingOpen !== false;
+    bookingUnavailable = false;
     const closedBanner = document.querySelector('#booking-closed-banner');
-    if (closedBanner) closedBanner.hidden = bookingOpen;
+    if (closedBanner) {
+      closedBanner.querySelector('strong').textContent = '현재 예매 접수를 받고 있지 않습니다.';
+      closedBanner.querySelector('span').textContent = '예매 기간에 다시 방문해주세요. 운영진이 접수를 열면 좌석을 선택할 수 있습니다.';
+      closedBanner.hidden = bookingOpen;
+    }
     for (const seat of selected) if (seatStates[seat] !== 'available') selected.delete(seat);
     renderSeats();
     renderSelection();
   } catch {
-    showLocalSeatMap();
+    if (showId !== selectedShow) return;
+    bookingOpen = false;
+    bookingUnavailable = true;
+    const closedBanner = document.querySelector('#booking-closed-banner');
+    if (closedBanner) {
+      closedBanner.querySelector('strong').textContent = '좌석 정보를 불러오지 못했습니다.';
+      closedBanner.querySelector('span').textContent = '서버 연결을 확인할 수 없어 예매를 잠시 막았습니다. 인터넷 연결을 확인하고 다시 시도해주세요.';
+      closedBanner.hidden = false;
+    }
+    renderSeats();
+    renderSelection();
   }
 }
 function closeModal() {
@@ -163,7 +172,7 @@ function showBookingSuccess(booking) {
 function openBooking() {
   if (!bookingOpen) return toast('현재 예매 접수 기간이 아닙니다.');
   const seats = [...selected].sort();
-  modal(`<button class="close" id="close-modal" aria-label="닫기">×</button><div class="eyebrow">BOOK YOUR SEAT</div><h2>예매 정보를 입력해주세요</h2><p class="sub">${selectedShow}공 · ${showDetails().date} ${showDetails().time}<br>${seats.join(', ')} · ${(seats.length * PRICE).toLocaleString()}원</p><div class="form-guidance"><strong>입력을 마치고 ‘입금 대기 예약하기’를 눌러주세요.</strong><span>이름과 입금자명을 적고, 연락처는 숫자 10~11자리로 입력하면 됩니다. 입력이 잘못된 칸은 아래에 안내해드려요.</span></div><form id="booking-form" novalidate><div class="form-grid"><div class="field"><label for="name">예매자 이름 <span>필수</span></label><input id="name" name="name" autocomplete="name" maxlength="40" placeholder="예: 홍길동" aria-describedby="name-help name-error"><small id="name-help" class="field-help">예매할 분의 이름을 입력해주세요.</small><small id="name-error" class="field-error" aria-live="polite"></small></div><div class="field"><label for="phone">연락처 <span>필수</span></label><input id="phone" name="phone" type="tel" inputmode="tel" autocomplete="tel" maxlength="20" placeholder="예: 010-1234-5678" aria-describedby="phone-help phone-error"><small id="phone-help" class="field-help">예약 조회에 사용하며, 예매가 확정되면 안내 문자를 한 번 보내드립니다.</small><small id="phone-error" class="field-error" aria-live="polite"></small></div><div class="field"><label for="payer">입금자명 <span>필수</span></label><input id="payer" name="payer" autocomplete="name" maxlength="40" placeholder="예: 홍길동" aria-describedby="payer-help payer-error"><small id="payer-help" class="field-help">계좌에 실제로 송금할 분의 이름을 적어주세요.</small><small id="payer-error" class="field-error" aria-live="polite"></small></div></div><div class="bank-box"><strong>입금 계좌 안내</strong><br>카카오뱅크 <strong>3333376900284</strong><br>입금 기한: 예약 후 30분 이내</div><div id="booking-error" class="form-error-summary" role="alert" aria-live="assertive" hidden></div><button class="primary" id="booking-submit" type="submit">입금 대기 예약하기</button><p class="hint">연락처 하나당 최대 2석입니다. 입력한 연락처로 예약을 다시 조회할 수 있어요.</p></form>`);
+  modal(`<button class="close" id="close-modal" aria-label="닫기">×</button><div class="eyebrow">BOOK YOUR SEAT</div><h2>예매 정보를 입력해주세요</h2><p class="sub">${selectedShow}공 · ${showDetails().date} ${showDetails().time}<br>${seats.join(', ')} · ${(seats.length * PRICE).toLocaleString()}원</p><div class="form-guidance"><strong>입력을 마치고 ‘입금 대기 예약하기’를 눌러주세요.</strong><span>이름과 입금자명을 적고, 연락처는 숫자 10~11자리로 입력하면 됩니다. 입력이 잘못된 칸은 아래에 안내해드려요.</span></div><form id="booking-form" novalidate><div class="form-grid"><div class="field"><label for="name">예매자 이름 <span>필수</span></label><input id="name" name="name" autocomplete="name" maxlength="40" placeholder="예: 홍길동" aria-describedby="name-help name-error"><small id="name-help" class="field-help">예매할 분의 이름을 입력해주세요.</small><small id="name-error" class="field-error" aria-live="polite"></small></div><div class="field"><label for="phone">연락처 <span>필수</span></label><input id="phone" name="phone" type="tel" inputmode="tel" autocomplete="tel" maxlength="20" placeholder="예: 010-1234-5678" aria-describedby="phone-help phone-error"><small id="phone-help" class="field-help">예약 조회에 사용하며, 예매가 확정되면 안내 문자를 한 번 보내드립니다.</small><small id="phone-error" class="field-error" aria-live="polite"></small></div><div class="field"><label for="payer">입금자명 <span>필수</span></label><input id="payer" name="payer" autocomplete="name" maxlength="40" placeholder="예: 홍길동" aria-describedby="payer-help payer-error"><small id="payer-help" class="field-help">계좌에 실제로 송금할 분의 이름을 적어주세요.</small><small id="payer-error" class="field-error" aria-live="polite"></small></div></div><div class="bank-box"><strong>입금 계좌 안내</strong><br>카카오뱅크 <strong>3333376900284</strong><br>입금 기한: 예약 후 30분 이내</div><p class="hint">입력한 이름·연락처·입금자명은 예매 운영과 입장 안내에 사용하며, 전체 예매 기록 초기화 전까지 보관합니다.</p><div id="booking-error" class="form-error-summary" role="alert" aria-live="assertive" hidden></div><button class="primary" id="booking-submit" type="submit">입금 대기 예약하기</button><p class="hint">회차별 연락처 하나당 최대 2석입니다. 입력한 연락처로 예약을 다시 조회할 수 있어요.</p></form>`);
   const formElement = document.querySelector('#booking-form');
   const errorText = field => {
     const value = formElement.elements[field].value.trim();
@@ -380,12 +389,17 @@ function bookingNotificationHtml(order) {
 }
 async function renderAdmin() {
   const view = document.querySelector('#admin-view');
+  const requestedShow = selectedShow;
   try {
     const session = await api('/api/admin/session');
+    if (view.classList.contains('hidden')) return;
     if (!session.authenticated) return adminLoginScreen();
     view.dataset.authenticated = 'true';
-    const data = await api(`/api/admin/bookings?show=${selectedShow}`);
-    const checkin = await api(`/api/admin/checkin-summary?show=${selectedShow}`);
+    const [data, checkin] = await Promise.all([
+      api(`/api/admin/bookings?show=${requestedShow}`),
+      api(`/api/admin/checkin-summary?show=${requestedShow}`),
+    ]);
+    if (requestedShow !== selectedShow || view.classList.contains('hidden')) return;
     const orders = data.bookings;
     bookingOpen = data.bookingOpen !== false;
     const pending = orders.filter(order => order.status === 'pending').length;
@@ -393,7 +407,7 @@ async function renderAdmin() {
     const checkinPercent = checkin.total ? Math.round(checkin.checkedIn / checkin.total * 100) : 0;
     const rowStatus = checkin.rows.length ? checkin.rows.map(row => `<div class="checkin-row"><span>${escapeHtml(row.row)}열</span><div class="checkin-row-track"><i style="width:${row.total ? Math.round(row.checked_in / row.total * 100) : 0}%"></i></div><strong>${row.checked_in}/${row.total}</strong></div>`).join('') : '<p class="checkin-empty">확정된 티켓이 아직 없습니다.</p>';
     const recentStatus = checkin.recent.length ? checkin.recent.map(ticket => `<div class="checkin-recent-item"><strong>${escapeHtml(ticket.seat)}</strong><time>${new Date(ticket.checked_in_at).toLocaleTimeString('ko-KR', { hour: '2-digit', minute: '2-digit' })}</time></div>`).join('') : '<p class="checkin-empty">아직 입장 처리된 티켓이 없습니다.</p>';
-    view.innerHTML = `<div class="admin-head"><div><div class="eyebrow">BACKSTAGE · ADMIN</div><h1>예매 관리</h1><p>입금 확인, 예약 취소와 환불 처리를 관리해주세요.</p></div><button id="admin-logout" class="admin-action">로그아웃</button></div><section class="panel booking-control"><div><div class="eyebrow">SITE STATUS</div><h2>사이트 예매 접수</h2><p>${bookingOpen ? '사이트가 열려 있어 모든 회차 예매를 받고 있습니다.' : '사이트가 닫혀 있어 방문자는 좌석을 선택하거나 예약할 수 없습니다.'}</p></div><div class="control-actions"><span class="site-status ${bookingOpen ? 'is-open' : 'is-closed'}">${bookingOpen ? '접수 중' : '접수 마감'}</span><button id="booking-toggle" class="admin-action ${bookingOpen ? 'danger' : ''}">${bookingOpen ? '예매 접수 닫기' : '예매 접수 열기'}</button></div></section><div class="show-picker admin-show-picker" role="group" aria-label="관리할 공연 선택">${SHOWS.map(show => `<button class="show-option ${selectedShow === show ? 'active' : ''}" data-show="${show}">${show}공</button>`).join('')}</div><div class="metrics"><div class="metric"><span>전체 예매</span><strong>${orders.length} <small>건</small></strong></div><div class="metric"><span>입금 확인 대기</span><strong>${pending} <small>건</small></strong></div><div class="metric"><span>확정된 좌석</span><strong>${paid} <small>석</small></strong></div></div><section class="panel checkin-dashboard"><div class="checkin-heading"><div><div class="eyebrow">LIVE ENTRY STATUS</div><h2>${selectedShow}공 현장 입장 현황</h2></div><button id="checkin-refresh" class="admin-action">새로고침</button></div><div class="checkin-progress"><div><strong>${checkin.checkedIn}</strong><span> / ${checkin.total}석 입장 완료</span><b>${checkinPercent}%</b></div><div class="checkin-track"><i style="width:${checkinPercent}%"></i></div></div><div class="checkin-columns"><div><h3>열별 입장</h3>${rowStatus}</div><div><h3>최근 입장 처리</h3><div class="checkin-recent">${recentStatus}</div></div></div><p class="checkin-note">확정된 티켓 기준이며, 이 화면은 12초마다 자동 갱신됩니다.</p></section><section class="panel orders"><div class="orders-top"><h2>${selectedShow}공 예매 신청 목록</h2><span>문자 발송 실패 시 재전송할 수 있습니다. ‘발송 여부 확인 필요’는 Solapi 내역을 먼저 확인하세요.</span></div><div id="orders-list">${orders.length ? orders.map(order => `<div class="order"><div class="order-name">${escapeHtml(order.name)}<small>${escapeHtml(order.id)} · ${new Date(order.createdAt).toLocaleString('ko-KR')}</small></div><div class="order-cell">${escapeHtml(order.seats.join(', '))}<small>${order.amount.toLocaleString()}원 · 입금자 ${escapeHtml(order.payer)}</small></div><div class="order-cell">${escapeHtml(order.phone)}<small>${order.seats.length}석</small></div><div><span class="badge ${({ paid: 'paid', expired: 'expired', cancelled: 'expired', refund_pending: '', refunded: 'expired' })[order.status] || ''}">${({ pending: '● 입금 대기', paid: '● 입금 확인', expired: '예약 만료', cancelled: '취소됨', refund_pending: '환불 처리 중', refunded: '환불 완료' })[order.status] || '상태 확인 필요'}</span>${bookingNotificationHtml(order)}</div><div class="order-actions">${order.status === 'pending' ? `<button class="admin-action" data-confirm="${escapeHtml(order.id)}">입금 확인</button>` : ''}${order.status === 'paid' && ['failed', 'not_configured', 'untracked'].includes(order.notificationStatus) ? `<button class="admin-action" data-retry-sms="${escapeHtml(order.id)}" data-untracked="${order.notificationStatus === 'untracked'}">${order.notificationStatus === 'untracked' ? '이력 확인 후 재전송' : '문자 재전송'}</button>` : ''}${['pending', 'paid'].includes(order.status) ? `<button class="admin-action danger" data-cancel="${escapeHtml(order.id)}" data-status="${order.status}">예약 취소</button>` : ''}${order.status === 'refund_pending' ? `<button class="admin-action" data-refund-complete="${escapeHtml(order.id)}">환불 완료 처리</button>` : ''}</div></div>`).join('') : '<div class="empty-admin">이 공연에는 아직 예매 신청이 없습니다.</div>'}</div></section><section class="panel reset-panel"><div><h2>전체 예매 기록 초기화</h2><p>1·2·3공의 예약, 좌석 선점, 입금 상태를 모두 삭제합니다. 초기화한 데이터는 복구할 수 없습니다.</p></div><button id="reset-all" class="admin-action danger">전체 초기화</button></section>`;
+    view.innerHTML = `<div class="admin-head"><div><div class="eyebrow">BACKSTAGE · ADMIN</div><h1>예매 관리</h1><p>입금 확인, 예약 취소와 환불 처리를 관리해주세요.</p></div><button id="admin-logout" class="admin-action">로그아웃</button></div><section class="panel booking-control"><div><div class="eyebrow">SITE STATUS</div><h2>사이트 예매 접수</h2><p>${bookingOpen ? '사이트가 열려 있어 모든 회차 예매를 받고 있습니다.' : '사이트가 닫혀 있어 방문자는 좌석을 선택하거나 예약할 수 없습니다.'}</p></div><div class="control-actions"><span class="site-status ${bookingOpen ? 'is-open' : 'is-closed'}">${bookingOpen ? '접수 중' : '접수 마감'}</span><button id="booking-toggle" class="admin-action ${bookingOpen ? 'danger' : ''}">${bookingOpen ? '예매 접수 닫기' : '예매 접수 열기'}</button></div></section><div class="show-picker admin-show-picker" role="group" aria-label="관리할 공연 선택">${SHOWS.map(show => `<button class="show-option ${requestedShow === show ? 'active' : ''}" data-show="${show}">${show}공</button>`).join('')}</div><div class="metrics"><div class="metric"><span>전체 예매</span><strong>${orders.length} <small>건</small></strong></div><div class="metric"><span>입금 확인 대기</span><strong>${pending} <small>건</small></strong></div><div class="metric"><span>확정된 좌석</span><strong>${paid} <small>석</small></strong></div></div><section class="panel checkin-dashboard"><div class="checkin-heading"><div><div class="eyebrow">LIVE ENTRY STATUS</div><h2>${requestedShow}공 현장 입장 현황</h2></div><button id="checkin-refresh" class="admin-action">새로고침</button></div><div class="checkin-progress"><div><strong>${checkin.checkedIn}</strong><span> / ${checkin.total}석 입장 완료</span><b>${checkinPercent}%</b></div><div class="checkin-track"><i style="width:${checkinPercent}%"></i></div></div><div class="checkin-columns"><div><h3>열별 입장</h3>${rowStatus}</div><div><h3>최근 입장 처리</h3><div class="checkin-recent">${recentStatus}</div></div></div><p class="checkin-note">확정된 티켓 기준이며, 이 화면은 12초마다 자동 갱신됩니다.</p></section><section class="panel orders"><div class="orders-top"><h2>${requestedShow}공 예매 신청 목록</h2><span>문자 발송 실패 시 재전송할 수 있습니다. ‘발송 여부 확인 필요’는 Solapi 내역을 먼저 확인하세요.</span></div><div id="orders-list">${orders.length ? orders.map(order => `<div class="order"><div class="order-name">${escapeHtml(order.name)}<small>${escapeHtml(order.id)} · ${new Date(order.createdAt).toLocaleString('ko-KR')}</small></div><div class="order-cell">${escapeHtml(order.seats.join(', '))}<small>${order.amount.toLocaleString()}원 · 입금자 ${escapeHtml(order.payer)}</small></div><div class="order-cell">${escapeHtml(order.phone)}<small>${order.seats.length}석</small></div><div><span class="badge ${({ paid: 'paid', expired: 'expired', cancelled: 'expired', refund_pending: '', refunded: 'expired' })[order.status] || ''}">${({ pending: '● 입금 대기', paid: '● 입금 확인', expired: '예약 만료', cancelled: '취소됨', refund_pending: '환불 처리 중', refunded: '환불 완료' })[order.status] || '상태 확인 필요'}</span>${bookingNotificationHtml(order)}</div><div class="order-actions">${order.status === 'pending' ? `<button class="admin-action" data-confirm="${escapeHtml(order.id)}">입금 확인</button>` : ''}${order.status === 'paid' && ['failed', 'not_configured', 'untracked'].includes(order.notificationStatus) ? `<button class="admin-action" data-retry-sms="${escapeHtml(order.id)}" data-untracked="${order.notificationStatus === 'untracked'}">${order.notificationStatus === 'untracked' ? '이력 확인 후 재전송' : '문자 재전송'}</button>` : ''}${['pending', 'paid'].includes(order.status) ? `<button class="admin-action danger" data-cancel="${escapeHtml(order.id)}" data-status="${order.status}">예약 취소</button>` : ''}${order.status === 'refund_pending' ? `<button class="admin-action" data-refund-complete="${escapeHtml(order.id)}">환불 완료 처리</button>` : ''}</div></div>`).join('') : '<div class="empty-admin">이 공연에는 아직 예매 신청이 없습니다.</div>'}</div></section><section class="panel reset-panel"><div><h2>전체 예매 기록 초기화</h2><p>1·2·3공의 예약, 좌석 선점, 입금 상태를 모두 삭제합니다. 초기화한 데이터는 복구할 수 없습니다.</p></div><button id="reset-all" class="admin-action danger">전체 초기화</button></section>`;
     const adminActions = view.querySelector('#admin-logout').parentElement;
     adminActions.classList.add('admin-head-actions');
     const checkinButton = document.createElement('button');
@@ -471,6 +485,7 @@ async function renderAdmin() {
       } catch (error) { toast(error.message); }
     });
   } catch (error) {
+    if (view.classList.contains('hidden')) return;
     view.dataset.authenticated = 'false';
     view.innerHTML = `<div class="admin-login"><button class="login-back" type="button" id="admin-back">← 공연 예매로 돌아가기</button><h2>운영자 화면을 불러오지 못했습니다.</h2><p>${escapeHtml(error.message)}</p></div>`;
     document.querySelector('#admin-back').onclick = showBookingView;
@@ -516,9 +531,19 @@ document.querySelector('#book-button').onclick = openBooking;
 document.querySelectorAll('[data-booking-show]').forEach(button => button.addEventListener('click', async () => {
   selectedShow = button.dataset.bookingShow;
   selected.clear();
+  bookingOpen = false;
+  bookingUnavailable = true;
   document.querySelectorAll('[data-booking-show]').forEach(item => item.classList.toggle('active', item === button));
   updateShowDetails();
-  await refreshSeats();
+  const banner = document.querySelector('#booking-closed-banner');
+  if (banner) {
+    banner.querySelector('strong').textContent = '좌석 정보를 확인하고 있습니다.';
+    banner.querySelector('span').textContent = `${selectedShow}공 좌석 현황을 불러오는 동안 잠시 기다려주세요.`;
+    banner.hidden = false;
+  }
+  renderSeats();
+  renderSelection();
+  await refreshSeats(selectedShow);
 }));
 updateShowDetails();
 openTicketLinkFromHash();

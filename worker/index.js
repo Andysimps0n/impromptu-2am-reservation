@@ -10,10 +10,16 @@ const SHOWS = new Set(['1', '2', '3']);
 const ALL_SEATS = ROWS.flatMap(row => Array.from({ length: row === 'L' ? 8 : 12 }, (_, i) => `${row}${String(i + 1).padStart(2, '0')}`));
 const RESERVED = new Set(ALL_SEATS.filter(seat => seat.startsWith('A')));
 const RESET_CONFIRMATION = '전체 예매 초기화';
+const SECURITY_HEADERS = {
+  'x-content-type-options': 'nosniff',
+  'x-frame-options': 'DENY',
+  'referrer-policy': 'no-referrer',
+  'permissions-policy': 'camera=(self)',
+};
 
 const json = (data, status = 200, headers = {}) => new Response(JSON.stringify(data), {
   status,
-  headers: { 'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-store', ...headers },
+  headers: { ...SECURITY_HEADERS, 'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-store', ...headers },
 });
 const cookieToken = request => /(?:^|; )stage_admin=([^;]+)/.exec(request.headers.get('cookie') || '')?.[1] || '';
 const normalizePhone = value => String(value || '').replace(/\D/g, '');
@@ -46,6 +52,31 @@ const bookingRow = async (db, row) => ({
   notificationErrorCode: row.notification_error_code || '',
   notificationUpdatedAt: row.notification_updated_at || null,
 });
+const adminBookingRows = async (db, rows, showId) => {
+  const [seatResult, ticketResult] = await Promise.all([
+    db.prepare(`SELECT s.booking_id,s.seat FROM booking_seats s JOIN bookings b ON b.id=s.booking_id
+      WHERE b.show_id=? ORDER BY s.seat`).bind(showId).all(),
+    db.prepare(`SELECT t.booking_id,t.id,t.seat,t.status,t.checked_in_at FROM tickets t
+      JOIN bookings b ON b.id=t.booking_id WHERE b.show_id=? AND b.status='paid' ORDER BY t.seat`).bind(showId).all(),
+  ]);
+  const seatsByBooking = new Map();
+  for (const item of seatResult.results) {
+    if (!seatsByBooking.has(item.booking_id)) seatsByBooking.set(item.booking_id, []);
+    seatsByBooking.get(item.booking_id).push(item.seat);
+  }
+  const ticketsByBooking = new Map();
+  for (const item of ticketResult.results) {
+    if (!ticketsByBooking.has(item.booking_id)) ticketsByBooking.set(item.booking_id, []);
+    ticketsByBooking.get(item.booking_id).push({ id: item.id, seat: item.seat, status: item.status, checkedInAt: item.checked_in_at });
+  }
+  return rows.map(row => ({
+    id: row.id, showId: row.show_id || '1', name: row.name, phone: maskPhone(row.phone), payer: row.payer,
+    seats: seatsByBooking.get(row.id) || [], tickets: row.status === 'paid' ? ticketsByBooking.get(row.id) || [] : [],
+    amount: row.amount, status: row.status, createdAt: row.created_at,
+    notificationStatus: row.notification_status || 'untracked', notificationAttempts: row.notification_attempts || 0,
+    notificationErrorCode: row.notification_error_code || '', notificationUpdatedAt: row.notification_updated_at || null,
+  }));
+};
 const requireAdmin = async (request, env) => {
   const token = cookieToken(request);
   if (!token) return false;
@@ -56,11 +87,15 @@ const requireAdmin = async (request, env) => {
 const cleanExpired = async db => {
   const cutoff = Date.now() - HOLD_MS;
   const ids = (await db.prepare("SELECT id FROM bookings WHERE status='pending' AND created_at<?").bind(cutoff).all()).results;
-  if (ids.length) await db.batch(ids.flatMap(({ id }) => [
-    db.prepare("UPDATE bookings SET status='expired' WHERE id=? AND status='pending'").bind(id),
-    db.prepare('DELETE FROM seat_locks WHERE booking_id=?').bind(id),
-    db.prepare('DELETE FROM performance_seat_locks WHERE booking_id=?').bind(id),
-  ]));
+  for (let offset = 0; offset < ids.length; offset += 20) {
+    const statements = ids.slice(offset, offset + 20).flatMap(({ id }) => [
+      db.prepare("UPDATE bookings SET status='expired' WHERE id=? AND status='pending'").bind(id),
+      db.prepare('DELETE FROM seat_locks WHERE booking_id=?').bind(id),
+      db.prepare('DELETE FROM performance_seat_locks WHERE booking_id=?').bind(id),
+      db.prepare('DELETE FROM phone_seat_locks WHERE booking_id=?').bind(id),
+    ]);
+    await db.batch(statements);
+  }
 };
 const getBookingOpen = async db => {
   const setting = await db.prepare("SELECT value FROM site_settings WHERE key='booking_open'").first();
@@ -105,7 +140,9 @@ const sendBookingConfirmationSms = async (env, row, ticketUrl) => {
 const recordSmsResult = (db, bookingId, result) => db.prepare(`UPDATE bookings
   SET notification_status=?,notification_error_code=?,notification_updated_at=?
   WHERE id=? AND notification_status='sending'`).bind(result.status, result.errorCode || null, Date.now(), bookingId).run();
-const ensureShowSchema = async db => {
+let showSchemaPromise;
+const ensureShowSchema = db => {
+  if (!showSchemaPromise) showSchemaPromise = (async () => {
   try { await db.prepare("ALTER TABLE bookings ADD COLUMN show_id TEXT NOT NULL DEFAULT '1'").run(); }
   catch (error) { if (!/duplicate column/i.test(String(error?.message || error))) throw error; }
   for (const sql of [
@@ -119,6 +156,10 @@ const ensureShowSchema = async db => {
     catch (error) { if (!/duplicate column/i.test(String(error?.message || error))) throw error; }
   }
   await db.prepare('CREATE UNIQUE INDEX IF NOT EXISTS bookings_ticket_access_hash_unique ON bookings(ticket_access_hash) WHERE ticket_access_hash IS NOT NULL').run();
+  await db.prepare('CREATE INDEX IF NOT EXISTS bookings_status_created ON bookings(status,created_at)').run();
+  await db.prepare('CREATE INDEX IF NOT EXISTS bookings_show_created ON bookings(show_id,created_at DESC)').run();
+  await db.prepare('CREATE INDEX IF NOT EXISTS bookings_phone_show_status ON bookings(phone,show_id,status)').run();
+  await db.prepare('CREATE INDEX IF NOT EXISTS booking_seats_by_booking ON booking_seats(booking_id)').run();
   await db.prepare(`CREATE TABLE IF NOT EXISTS performance_seat_locks (
     show_id TEXT NOT NULL, seat TEXT NOT NULL,
     booking_id TEXT NOT NULL REFERENCES bookings(id) ON DELETE CASCADE,
@@ -138,11 +179,30 @@ const ensureShowSchema = async db => {
     checked_in_at INTEGER,
     UNIQUE (booking_id, seat)
   )`).run();
+  await db.prepare(`CREATE TABLE IF NOT EXISTS phone_seat_locks (
+    show_id TEXT NOT NULL,
+    phone TEXT NOT NULL,
+    slot INTEGER NOT NULL CHECK (slot BETWEEN 1 AND 2),
+    booking_id TEXT NOT NULL REFERENCES bookings(id) ON DELETE CASCADE,
+    seat TEXT NOT NULL,
+    PRIMARY KEY (show_id, phone, slot),
+    UNIQUE (show_id, phone, seat),
+    UNIQUE (booking_id, seat)
+  )`).run();
+  await db.prepare(`WITH ranked AS (
+    SELECT b.show_id,b.phone,b.id AS booking_id,s.seat,
+      ROW_NUMBER() OVER (PARTITION BY b.show_id,b.phone ORDER BY b.created_at,b.id,s.seat) AS slot
+    FROM bookings b JOIN booking_seats s ON s.booking_id=b.id
+    WHERE b.status IN ('pending','paid','refund_pending')
+  ) INSERT OR IGNORE INTO phone_seat_locks(show_id,phone,slot,booking_id,seat)
+    SELECT show_id,phone,slot,booking_id,seat FROM ranked WHERE slot<=2`).run();
   const missingTickets = (await db.prepare(`SELECT b.id AS booking_id,b.show_id,s.seat FROM bookings b
     JOIN booking_seats s ON s.booking_id=b.id
     WHERE b.status='paid' AND NOT EXISTS (SELECT 1 FROM tickets t WHERE t.booking_id=b.id AND t.seat=s.seat)`).all()).results;
   if (missingTickets.length) await db.batch(missingTickets.map(ticket => db.prepare('INSERT OR IGNORE INTO tickets(id,booking_id,show_id,seat) VALUES(?,?,?,?)')
     .bind(Array.from(crypto.getRandomValues(new Uint8Array(16)), byte => byte.toString(16).padStart(2, '0')).join(''), ticket.booking_id, ticket.show_id || '1', ticket.seat)));
+  })().catch(error => { showSchemaPromise = null; throw error; });
+  return showSchemaPromise;
 };
 
 export default {
@@ -150,16 +210,16 @@ export default {
     const url = new URL(request.url);
     const db = env.DB;
     try {
-      if (request.method === 'GET' && url.pathname === '/') return new Response(INDEX_HTML, { headers: { 'content-type': 'text/html; charset=utf-8', 'cache-control': 'no-store' } });
-      if (request.method === 'GET' && url.pathname === '/app.js') return new Response(APP_JS, { headers: { 'content-type': 'text/javascript; charset=utf-8', 'cache-control': 'no-store' } });
-      if (request.method === 'GET' && url.pathname === '/styles.css') return new Response(SITE_CSS, { headers: { 'content-type': 'text/css; charset=utf-8', 'cache-control': 'no-store' } });
+      if (request.method === 'GET' && url.pathname === '/') return new Response(INDEX_HTML, { headers: { ...SECURITY_HEADERS, 'content-type': 'text/html; charset=utf-8', 'cache-control': 'no-store' } });
+      if (request.method === 'GET' && url.pathname === '/app.js') return new Response(APP_JS, { headers: { ...SECURITY_HEADERS, 'content-type': 'text/javascript; charset=utf-8', 'cache-control': 'no-store' } });
+      if (request.method === 'GET' && url.pathname === '/styles.css') return new Response(SITE_CSS, { headers: { ...SECURITY_HEADERS, 'content-type': 'text/css; charset=utf-8', 'cache-control': 'no-store' } });
       if (request.method === 'GET' && decodeURIComponent(url.pathname) === '/즉새두로고2.png') {
         const bytes = Uint8Array.from(atob(LOGO_PNG), char => char.charCodeAt(0));
-        return new Response(bytes, { headers: { 'content-type': 'image/png', 'cache-control': 'no-store' } });
+        return new Response(bytes, { headers: { ...SECURITY_HEADERS, 'content-type': 'image/png', 'cache-control': 'no-store' } });
       }
       if (request.method === 'GET' && decodeURIComponent(url.pathname) === '/즉새두로고1.png') {
         const bytes = Uint8Array.from(atob(HERO_LOGO_PNG), char => char.charCodeAt(0));
-        return new Response(bytes, { headers: { 'content-type': 'image/png', 'cache-control': 'no-store' } });
+        return new Response(bytes, { headers: { ...SECURITY_HEADERS, 'content-type': 'image/png', 'cache-control': 'no-store' } });
       }
       if (request.method === 'GET' && url.pathname === '/api/seats') {
         const showId = url.searchParams.get('show') || '1';
@@ -187,16 +247,23 @@ export default {
         if (phone.length < 10 || phone.length > 11) return json({ error: '연락처는 숫자 10~11자리로 입력해주세요. 예: 010-1234-5678' }, 400);
         if (seats.length < 1 || seats.length > 2 || seats.some(seat => !ALL_SEATS.includes(seat))) return json({ error: '선택한 좌석 정보를 확인해주세요. 좌석은 한 번에 최대 2석까지 신청할 수 있습니다.' }, 400);
         if (seats.some(seat => RESERVED.has(seat))) return json({ error: 'A열은 운영진 보유석으로 예매할 수 없습니다.' }, 400);
-        const existing = await db.prepare("SELECT COUNT(*) AS count FROM booking_seats s JOIN bookings b ON b.id=s.booking_id WHERE b.phone=? AND b.show_id=? AND b.status IN ('pending','paid','refund_pending')").bind(phone, showId).first();
+        const existing = await db.prepare('SELECT COUNT(*) AS count FROM phone_seat_locks WHERE show_id=? AND phone=?').bind(showId, phone).first();
         if (existing.count + seats.length > 2) return json({ error: '연락처 하나당 최대 2석까지 예매할 수 있습니다.' }, 429);
         const id = `STG-${Array.from(crypto.getRandomValues(new Uint8Array(5)), b => b.toString(16).padStart(2, '0')).join('').toUpperCase()}`;
         const createdAt = Date.now();
         const statements = [db.prepare("INSERT INTO bookings(id,name,phone,payer,amount,status,created_at,show_id) VALUES(?,?,?,?,?,'pending',?,?)").bind(id, name, phone, payer, seats.length * PRICE, createdAt, showId)];
-        for (const seat of seats) statements.push(db.prepare('INSERT INTO booking_seats(seat,booking_id) VALUES(?,?)').bind(seat, id));
-        for (const seat of seats) statements.push(db.prepare('INSERT INTO performance_seat_locks(show_id,seat,booking_id) VALUES(?,?,?)').bind(showId, seat, id));
+        for (const seat of seats) {
+          statements.push(db.prepare('INSERT INTO booking_seats(seat,booking_id) VALUES(?,?)').bind(seat, id));
+          statements.push(db.prepare('INSERT INTO performance_seat_locks(show_id,seat,booking_id) VALUES(?,?,?)').bind(showId, seat, id));
+          statements.push(db.prepare(`INSERT INTO phone_seat_locks(show_id,phone,slot,booking_id,seat)
+            SELECT ?,?,CASE WHEN EXISTS (SELECT 1 FROM phone_seat_locks WHERE show_id=? AND phone=? AND slot=1) THEN 2 ELSE 1 END,?,?`)
+            .bind(showId, phone, showId, phone, id, seat));
+        }
         try { await db.batch(statements); }
         catch (error) {
           console.error('booking_write_failed', { message: String(error?.message || error).slice(0, 240) });
+          if (/CHECK constraint failed: slot/i.test(String(error?.message || error))) return json({ error: '연락처 하나당 회차별 최대 2석까지 예매할 수 있습니다.' }, 429);
+          if (/UNIQUE constraint failed: phone_seat_locks\./i.test(String(error?.message || error))) return json({ error: '연락처 하나당 회차별 최대 2석까지 예매할 수 있습니다.' }, 429);
           if (/unique constraint|primary key|constraint failed/i.test(String(error?.message || error))) return json({ error: '선택한 좌석 중 이미 예약된 좌석이 있습니다. 좌석을 다시 선택해주세요.' }, 409);
           return json({ error: '예약 저장 중 문제가 발생했습니다. 잠시 후 다시 시도해주세요.' }, 503);
         }
@@ -250,6 +317,7 @@ export default {
       }
       if (request.method === 'GET' && url.pathname === '/api/admin/checkin-summary') {
         if (!await requireAdmin(request, env)) return json({ error: '운영진 로그인이 필요합니다.' }, 401);
+        await ensureShowSchema(db);
         const showId = url.searchParams.get('show') || '1';
         if (!SHOWS.has(showId)) return json({ error: '공연 회차를 확인해주세요.' }, 400);
         const totals = await db.prepare(`SELECT COUNT(*) AS total,
@@ -273,7 +341,7 @@ export default {
         const showId = url.searchParams.get('show') || '1';
         if (!SHOWS.has(showId)) return json({ error: '공연 회차를 확인해주세요.' }, 400);
         const rows = (await db.prepare('SELECT * FROM bookings WHERE show_id=? ORDER BY created_at DESC').bind(showId).all()).results;
-        return json({ bookings: await Promise.all(rows.map(row => bookingRow(db, row))), bookingOpen: await getBookingOpen(db) });
+        return json({ bookings: await adminBookingRows(db, rows, showId), bookingOpen: await getBookingOpen(db) });
       }
       if (request.method === 'POST' && url.pathname === '/api/admin/settings') {
         if (!await requireAdmin(request, env)) return json({ error: '운영진 로그인이 필요합니다.' }, 401);
@@ -292,6 +360,7 @@ export default {
         const total = await db.prepare('SELECT COUNT(*) AS count FROM bookings').first();
         await db.batch([
           db.prepare('DELETE FROM tickets'),
+          db.prepare('DELETE FROM phone_seat_locks'),
           db.prepare('DELETE FROM performance_seat_locks'),
           db.prepare('DELETE FROM seat_locks'),
           db.prepare('DELETE FROM booking_seats'),
@@ -382,6 +451,7 @@ export default {
         if (next === 'cancelled') {
           statements.push(db.prepare('DELETE FROM seat_locks WHERE booking_id=?').bind(cancel[1]));
           statements.push(db.prepare('DELETE FROM performance_seat_locks WHERE booking_id=?').bind(cancel[1]));
+          statements.push(db.prepare('DELETE FROM phone_seat_locks WHERE booking_id=?').bind(cancel[1]));
         }
         await db.batch(statements);
         return json({ status: next });
@@ -389,13 +459,16 @@ export default {
       const refund = /^\/api\/admin\/bookings\/([A-Z0-9-]+)\/refund-complete$/.exec(url.pathname);
       if (request.method === 'POST' && refund) {
         if (!await requireAdmin(request, env)) return json({ error: '운영진 로그인이 필요합니다.' }, 401);
-        const result = await db.prepare("UPDATE bookings SET status='refunded' WHERE id=? AND status='refund_pending'").bind(refund[1]).run();
-        if (!result.meta.changes) return json({ error: '환불 처리 중인 예약을 찾지 못했습니다.' }, 404);
-        await db.prepare('DELETE FROM seat_locks WHERE booking_id=?').bind(refund[1]).run();
-        await db.prepare('DELETE FROM performance_seat_locks WHERE booking_id=?').bind(refund[1]).run();
+        const results = await db.batch([
+          db.prepare("UPDATE bookings SET status='refunded' WHERE id=? AND status='refund_pending'").bind(refund[1]),
+          db.prepare('DELETE FROM seat_locks WHERE booking_id=?').bind(refund[1]),
+          db.prepare('DELETE FROM performance_seat_locks WHERE booking_id=?').bind(refund[1]),
+          db.prepare('DELETE FROM phone_seat_locks WHERE booking_id=?').bind(refund[1]),
+        ]);
+        if (!results[0]?.meta?.changes) return json({ error: '환불 처리 중인 예약을 찾지 못했습니다.' }, 404);
         return json({ status: 'refunded' });
       }
-      if (request.method === 'GET') return new Response('페이지를 찾지 못했습니다.', { status: 404 });
+      if (request.method === 'GET') return new Response('페이지를 찾지 못했습니다.', { status: 404, headers: SECURITY_HEADERS });
       return json({ error: '요청을 처리할 수 없습니다.' }, 404);
     } catch (error) {
       if (String(error?.message || '').includes('no such table')) return json({ error: '데이터베이스가 아직 준비되지 않았습니다.' }, 503);
