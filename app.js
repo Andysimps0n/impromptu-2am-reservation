@@ -256,7 +256,7 @@ function showLinkedTicketResult(data) {
   drawTicket();
 }
 async function openTicketLinkFromHash() {
-  const match = /^#t=([A-Za-z0-9_-]{22})$/.exec(location.hash);
+  const match = /^#t=([A-Za-z0-9_-]{16}|[A-Za-z0-9_-]{22})$/.exec(location.hash);
   if (!match) return;
   try {
     const result = await api('/api/ticket-link', { method: 'POST', body: JSON.stringify({ token: match[1] }) });

@@ -25,7 +25,8 @@ const safeEqual = (a, b) => {
 };
 const tokenHash = async token => Array.from(new Uint8Array(await crypto.subtle.digest('SHA-256', new TextEncoder().encode(token))), b => b.toString(16).padStart(2, '0')).join('');
 const createTicketAccessToken = () => {
-  const bytes = crypto.getRandomValues(new Uint8Array(16));
+  // 96-bit random bearer token keeps the branded link within the 90-byte SMS limit.
+  const bytes = crypto.getRandomValues(new Uint8Array(12));
   const binary = Array.from(bytes, byte => String.fromCharCode(byte)).join('');
   return btoa(binary).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/g, '');
 };
@@ -75,11 +76,13 @@ const sendBookingConfirmationSms = async (env, row, ticketUrl) => {
     const signatureBytes = new Uint8Array(await crypto.subtle.sign('HMAC', key, new TextEncoder().encode(date + salt)));
     const signature = Array.from(signatureBytes, byte => byte.toString(16).padStart(2, '0')).join('');
     const auth = `HMAC-SHA256 apiKey=${env.SOLAPI_API_KEY}, date=${date}, salt=${salt}, signature=${signature}`;
-    const text = `즉흥적 새벽 2시의 How’d you feel? 공연 입장 QR 링크입니다.\n공연 티켓 확인용 공식 링크입니다. 입장할 때 아래 QR을 보여주세요.\n\n${ticketUrl}`;
+    const text = `즉새두 QR ${ticketUrl}`;
+    const smsBytes = Array.from(text).reduce((total, character) => total + (character.codePointAt(0) > 0x7f ? 2 : 1), 0);
+    if (smsBytes > 90) return { status: 'failed', errorCode: 'SMS_LENGTH_OVER_90_BYTES' };
     const response = await fetch('https://api.solapi.com/messages/v4/send-many/detail', {
       method: 'POST',
       headers: { authorization: auth, 'content-type': 'application/json' },
-      body: JSON.stringify({ messages: [{ to: row.phone, from: env.SOLAPI_FROM_NUMBER.replace(/\D/g, ''), text, type: 'LMS', autoTypeDetect: false }], strict: true }),
+      body: JSON.stringify({ messages: [{ to: row.phone, from: env.SOLAPI_FROM_NUMBER.replace(/\D/g, ''), text, type: 'SMS', autoTypeDetect: false }], strict: true }),
       signal: AbortSignal.timeout(8000),
     });
     const result = await response.json().catch(() => ({}));
@@ -213,7 +216,7 @@ export default {
         await ensureShowSchema(db);
         const input = await readBody(request);
         const token = String(input.token || '').trim();
-        if (!/^[A-Za-z0-9_-]{22}$/.test(token)) return json({ error: '입장 QR 링크가 올바르지 않습니다.' }, 404);
+        if (!/^(?:[A-Za-z0-9_-]{16}|[A-Za-z0-9_-]{22})$/.test(token)) return json({ error: '입장 QR 링크가 올바르지 않습니다.' }, 404);
         const access = await db.prepare("SELECT id,show_id FROM bookings WHERE ticket_access_hash=? AND status='paid'").bind(await tokenHash(token)).first();
         if (!access) return json({ error: '입장 QR 링크가 유효하지 않거나 취소된 예약입니다.' }, 404);
         const tickets = (await db.prepare('SELECT id,seat,status,checked_in_at FROM tickets WHERE booking_id=? ORDER BY seat').bind(access.id).all()).results;
