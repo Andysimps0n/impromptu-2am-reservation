@@ -57,7 +57,7 @@ const getBookingOpen = async db => {
   return setting?.value !== 'closed';
 };
 const sendBookingConfirmationSms = async (env, row, seats) => {
-  if (!env.SOLAPI_API_KEY || !env.SOLAPI_API_SECRET || !env.SOLAPI_FROM_NUMBER) return 'not_configured';
+  if (!env.SOLAPI_API_KEY || !env.SOLAPI_API_SECRET || !env.SOLAPI_FROM_NUMBER) return { status: 'not_configured' };
 
   try {
     const date = new Date().toISOString();
@@ -73,19 +73,21 @@ const sendBookingConfirmationSms = async (env, row, seats) => {
       body: JSON.stringify({ messages: [{ to: row.phone, from: env.SOLAPI_FROM_NUMBER.replace(/\D/g, ''), text, type: 'SMS', autoTypeDetect: false }], strict: true }),
       signal: AbortSignal.timeout(8000),
     });
+    const result = await response.json().catch(() => ({}));
+    const failedMessage = result.failedMessageList?.[0] || {};
+    const errorCode = String(result.errorCode || result.code || failedMessage.statusCode || '').slice(0, 80);
     if (!response.ok) {
-      console.error('confirmation_sms_send_failed', { status: response.status });
-      return 'failed';
+      console.error('confirmation_sms_send_failed', { httpStatus: response.status, errorCode });
+      return { status: 'failed', errorCode };
     }
-    const result = await response.json();
     if (result.failedMessageList?.length || Number(result.count?.registeredFailed || 0) > 0 || Number(result.count?.registeredSuccess ?? 1) < 1) {
-      console.error('confirmation_sms_send_failed', { rejected: result.failedMessageList?.length || result.count?.registeredFailed || 0 });
-      return 'failed';
+      console.error('confirmation_sms_send_failed', { errorCode, rejected: result.failedMessageList?.length || result.count?.registeredFailed || 0 });
+      return { status: 'failed', errorCode };
     }
-    return 'accepted';
+    return { status: 'accepted' };
   } catch (error) {
-    console.error('confirmation_sms_send_failed', { message: String(error?.message || error).slice(0, 160) });
-    return 'failed';
+    console.error('confirmation_sms_send_failed', { errorType: String(error?.name || 'Error').slice(0, 40) });
+    return { status: 'failed', errorCode: 'NETWORK_OR_TIMEOUT' };
   }
 };
 const ensureShowSchema = async db => {
@@ -257,7 +259,7 @@ export default {
         const results = await db.batch(statements);
         if (!results[0]?.meta?.changes) return json({ error: '입금 대기 중인 예약을 찾지 못했습니다.' }, 404);
         const notification = await sendBookingConfirmationSms(env, row, seats);
-        return json({ confirmed: true, notification });
+        return json({ confirmed: true, notification: notification.status, notificationCode: notification.errorCode || '' });
       }
       if (request.method === 'POST' && url.pathname === '/api/admin/tickets/check-in') {
         if (!await requireAdmin(request, env)) return json({ error: '운영진 로그인이 필요합니다.' }, 401);

@@ -352,7 +352,11 @@ async function renderAdmin() {
     view.querySelectorAll('[data-confirm]').forEach(button => button.onclick = async () => {
       try {
         const result = await api(`/api/admin/bookings/${encodeURIComponent(button.dataset.confirm)}/confirm`, { method: 'POST', body: '{}' });
-        const notification = result.notification === 'accepted' ? ' 확정 안내 문자를 발송 요청했습니다.' : ' 문자가 설정되지 않았거나 발송에 실패했습니다.';
+        const notification = result.notification === 'accepted'
+          ? ' 확정 안내 문자를 발송 요청했습니다.'
+          : result.notification === 'not_configured'
+            ? ' 문자 발송 설정이 빠져 있습니다.'
+            : ` 문자 발송에 실패했습니다${result.notificationCode ? ` (오류 코드: ${escapeHtml(result.notificationCode)})` : ''}. Cloudflare Worker 로그에서 상세 원인을 확인해주세요.`;
         toast(`입금 확인을 완료했습니다.${notification}`);
         await renderAdmin(); refreshSeats().catch(() => {});
       }
