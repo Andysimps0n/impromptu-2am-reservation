@@ -1,4 +1,5 @@
 const PRICE = 6500;
+const MAX_SEATS = 4;
 const ROWS = Array.from({ length: 12 }, (_, row) => String.fromCharCode(65 + row));
 const SHOWS = ['1', '2', '3'];
 const SHOW_DETAILS = {
@@ -33,18 +34,70 @@ async function api(path, options = {}) {
 function escapeHtml(value) {
   return String(value).replace(/[&<>"']/g, char => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[char]);
 }
+function formatPhone(value) {
+  const digits = String(value).replace(/\D/g, '').slice(0, 11);
+  const parts = [digits.slice(0, 3), digits.slice(3, 7), digits.slice(7)].filter(part => part);
+  return parts.join('-');
+}
+function formatPhoneInput(input) {
+  const digitsBeforeCaret = input.value.slice(0, input.selectionStart ?? 0).replace(/\D/g, '').length;
+  const formatted = formatPhone(input.value);
+  if (input.value === formatted) return;
+  input.value = formatted;
+  let seen = 0;
+  let caret = formatted.length;
+  for (let index = 0; index < formatted.length; index += 1) {
+    if (/\d/.test(formatted[index])) seen += 1;
+    if (seen >= digitsBeforeCaret) {
+      caret = index + 1;
+      break;
+    }
+  }
+  input.setSelectionRange(caret, caret);
+}
 function toast(message) {
   const root = document.querySelector('#toast-root');
   root.innerHTML = `<div class="toast">${escapeHtml(message)}</div>`;
   setTimeout(() => { root.innerHTML = ''; }, 2800);
 }
 function showDetails(show = selectedShow) { return SHOW_DETAILS[show]; }
+function shortShowDate(date) {
+  const match = String(date).match(/(\d+)월\s+(\d+)일\s+([가-힣])요일/);
+  if (!match) return date;
+  return `${match[1]}.${match[2]} (${match[3]})`;
+}
+function bookingDateLabel(date) {
+  return String(date).replace(/^\d+년\s*/, '');
+}
+async function copyAccountNumber() {
+  const account = '3333376900284';
+  try {
+    await navigator.clipboard.writeText(account);
+  } catch {
+    const field = document.createElement('textarea');
+    field.value = account;
+    field.setAttribute('readonly', '');
+    document.body.append(field);
+    field.select();
+    const copied = document.execCommand('copy');
+    field.remove();
+    if (!copied) {
+      toast('계좌번호를 복사하지 못했습니다. 직접 입력해주세요.');
+      return;
+    }
+  }
+  toast('계좌번호를 복사했습니다.');
+}
 function updateShowDetails() {
   const details = showDetails();
   const date = document.querySelector('#show-date');
   const time = document.querySelector('#show-time');
   if (date) date.textContent = details.date;
   if (time) time.textContent = details.time;
+  const heroDate = document.querySelector('#hero-date');
+  const heroTime = document.querySelector('#hero-time');
+  if (heroDate) heroDate.textContent = shortShowDate(details.date);
+  if (heroTime) heroTime.textContent = details.time;
   const eventTime = document.querySelector('#event-time');
   if (eventTime) eventTime.textContent = `${selectedShow}공 · ${details.date} ${details.time}`;
 }
@@ -76,7 +129,7 @@ function renderSeats() {
       button.setAttribute('aria-label', `좌석 ${rowLetter}열 ${column}번 ${seatStatus}`);
       button.disabled = state !== 'available' || !bookingOpen;
       button.onclick = () => {
-        if (!selected.has(seat) && selected.size >= 2) return toast('한 번에 최대 2석까지 선택할 수 있어요.');
+        if (!selected.has(seat) && selected.size >= MAX_SEATS) return toast(`한 번에 최대 ${MAX_SEATS}석까지 선택할 수 있어요.`);
         selected.has(seat) ? selected.delete(seat) : selected.add(seat);
         renderSeats();
         renderSelection();
@@ -135,10 +188,26 @@ function showBookingSuccess(booking) {
   modal(`<div class="success"><div class="check">✓</div><div class="eyebrow">REQUEST RECEIVED</div><h2>입금 대기 예약이 등록됐어요</h2><p>${booking.showId || selectedShow}공 · ${details.date} ${details.time}<br>아래 예약 코드를 입금 메모에 적어주세요.<br>입금 확인 전까지 좌석은 30분간 확보됩니다.</p><div class="code">${escapeHtml(booking.id)}</div><div style="margin:0 0 12px"><span class="badge">● 입금 대기</span></div><div class="bank-box" style="text-align:left"><strong>입금 계좌 안내</strong><br>카카오뱅크 <strong>3333376900284</strong><br>입금액 ${booking.amount.toLocaleString()}원 · 입금자명은 신청 내용과 동일하게</div><button class="primary" id="success-close">예약 정보 보기</button></div>`);
   document.querySelector('#success-close').onclick = () => openLookup(booking.id);
 }
-function openBooking() {
+function openBooking(prefill = {}) {
   if (!bookingOpen) return toast('현재 예매 접수 기간이 아닙니다.');
   const seats = [...selected].sort();
-  modal(`<button class="close" id="close-modal" aria-label="닫기">×</button><div class="eyebrow">BOOK YOUR SEAT</div><h2>예매 정보를 입력해주세요</h2><p class="sub">${selectedShow}공 · ${showDetails().date} ${showDetails().time}<br>${seats.join(', ')} · ${(seats.length * PRICE).toLocaleString()}원</p><div class="form-guidance"><strong>입력을 마치고 ‘입금 대기 예약하기’를 눌러주세요.</strong><span>이름과 입금자명을 적고, 연락처는 숫자 10~11자리로 입력하면 됩니다. 입력이 잘못된 칸은 아래에 안내해드려요.</span></div><form id="booking-form" novalidate><div class="form-grid"><div class="field"><label for="name">예매자 이름 <span>필수</span></label><input id="name" name="name" autocomplete="name" maxlength="40" placeholder="예: 홍길동" aria-describedby="name-help name-error"><small id="name-help" class="field-help">예매할 분의 이름을 입력해주세요.</small><small id="name-error" class="field-error" aria-live="polite"></small></div><div class="field"><label for="phone">연락처 <span>필수</span></label><input id="phone" name="phone" type="tel" inputmode="tel" autocomplete="tel" maxlength="20" placeholder="예: 010-1234-5678" aria-describedby="phone-help phone-error"><small id="phone-help" class="field-help">숫자만 또는 하이픈을 넣어 입력해도 됩니다. 예약 조회와 안내에 사용해요.</small><small id="phone-error" class="field-error" aria-live="polite"></small></div><div class="field"><label for="payer">입금자명 <span>필수</span></label><input id="payer" name="payer" autocomplete="name" maxlength="40" placeholder="예: 홍길동" aria-describedby="payer-help payer-error"><small id="payer-help" class="field-help">계좌에 실제로 송금할 분의 이름을 적어주세요.</small><small id="payer-error" class="field-error" aria-live="polite"></small></div></div><div class="bank-box"><strong>입금 계좌 안내</strong><br>카카오뱅크 <strong>3333376900284</strong><br>입금 기한: 예약 후 30분 이내</div><div id="booking-error" class="form-error-summary" role="alert" aria-live="assertive" hidden></div><button class="primary" id="booking-submit" type="submit">입금 대기 예약하기</button><p class="hint">연락처 하나당 최대 2석입니다. 입력한 연락처로 예약을 다시 조회할 수 있어요.</p></form>`);
+  const details = showDetails();
+  const seatText = seats.map(seat => `${seat[0]}열 ${Number(seat.slice(1))}번`).join(', ');
+  const when = `${bookingDateLabel(details.date)} ${details.time}`;
+  modal(`<button class="close" id="close-modal" aria-label="닫기">×</button>
+    <h2>좌석 예매하기</h2>
+    <p class="sub">${escapeHtml(when)}<br>${escapeHtml(seatText)}</p>
+    <div class="bank-box"><strong>${seats.length}석 · ${(seats.length * PRICE).toLocaleString()}원</strong><br>카카오뱅크 <span class="account-line"><button type="button" class="account-copy" id="copy-account">3333376900284</button><button type="button" class="account-icon" id="copy-account-icon" aria-label="계좌번호 복사"><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="9" y="9" width="11" height="11" rx="2" fill="none" stroke="currentColor" stroke-width="1.8"/><path d="M5 15V5h10" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg></button></span><br>입금 기한: 예약 후 30분 이내</div>
+    <form id="booking-form" novalidate>
+      <div class="form-grid"><div class="field"><label for="name">예매자 이름</label><input id="name" name="name" autocomplete="name" maxlength="40" placeholder="예: 홍길동" aria-describedby="name-error" value="${escapeHtml(prefill.name || '')}"><small id="name-error" class="field-error" aria-live="polite"></small></div><div class="field"><label for="phone">연락처</label><input id="phone" name="phone" type="tel" inputmode="tel" autocomplete="tel" maxlength="20" placeholder="예: 010-1234-567" aria-describedby="phone-error" value="${escapeHtml(prefill.phone || '')}"><small id="phone-error" class="field-error" aria-live="polite"></small></div><div class="field"><label for="payer">입금자명</label><input id="payer" name="payer" autocomplete="name" maxlength="40" placeholder="예: 홍길동" aria-describedby="payer-error" value="${escapeHtml(prefill.payer || '')}"><small id="payer-error" class="field-error" aria-live="polite"></small></div></div>
+      <div id="booking-error" class="form-error-summary" role="alert" aria-live="assertive" hidden></div>
+      <button class="primary" id="booking-submit" type="submit">입금 대기 예약하기</button>
+      <div class="privacy-row">
+        <label class="privacy-check"><input type="checkbox" id="privacy-agree">개인정보 수집에 동의합니다.</label>
+        <button type="button" class="privacy-open" id="privacy-open" aria-expanded="false" aria-controls="privacy-note">개인정보 수집 안내</button>
+      </div>
+      <div class="privacy-note" id="privacy-note" hidden><p>전화번호는 예약 확인 메시지를 보내기 위해 수집합니다. 예약 조회에도 함께 쓰이며, 해당 공연의 예매 안내가 끝나면 삭제합니다. 동의하지 않으면 예약 메시지를 받을 수 없고 예매를 진행할 수 없습니다.</p></div>
+    </form>`);
   const formElement = document.querySelector('#booking-form');
   const errorText = field => {
     const value = formElement.elements[field].value.trim();
@@ -148,8 +217,8 @@ function openBooking() {
     if (field === 'payer' && value.length > 40) return '입금자명은 40자 이내로 입력해주세요.';
     if (field === 'phone') {
       const digits = value.replace(/\D/g, '');
-      if (!value) return '연락처를 입력해주세요. 예: 010-1234-5678';
-      if (digits.length < 10 || digits.length > 11) return '연락처 숫자를 10~11자리로 입력해주세요. 예: 010-1234-5678';
+      if (!value) return '연락처를 입력해주세요. 예: 010-1234-567';
+      if (digits.length < 10 || digits.length > 11) return '연락처 숫자를 10~11자리로 입력해주세요. 예: 010-1234-567';
     }
     return '';
   };
@@ -164,12 +233,12 @@ function openBooking() {
     const input = formElement.elements[field];
     input.addEventListener('blur', () => validateField(field));
     input.addEventListener('input', () => {
+      if (field === 'phone') formatPhoneInput(input);
       if (input.getAttribute('aria-invalid') === 'true') validateField(field);
     });
   });
   formElement.onsubmit = async event => {
     event.preventDefault();
-    const submit = document.querySelector('#booking-submit');
     const errorMessage = document.querySelector('#booking-error');
     const fields = ['name', 'phone', 'payer'];
     const valid = fields.map(field => validateField(field)).every(Boolean);
@@ -179,13 +248,26 @@ function openBooking() {
       formElement.querySelector('[aria-invalid="true"]')?.focus();
       return;
     }
+    const agree = document.querySelector('#privacy-agree');
+    if (!agree.checked) {
+      errorMessage.hidden = false;
+      errorMessage.textContent = '개인정보 수집에 동의해주세요.';
+      agree.focus();
+      return;
+    }
+    const form = new FormData(event.currentTarget);
+    const submit = document.querySelector('#booking-submit');
     submit.disabled = true;
     submit.textContent = '예약 처리 중…';
-    errorMessage.textContent = '';
     errorMessage.hidden = true;
-    const form = new FormData(event.currentTarget);
     try {
-      const booking = await api('/api/bookings', { method: 'POST', body: JSON.stringify({ name: form.get('name'), phone: form.get('phone'), payer: form.get('payer'), seats, showId: selectedShow }) });
+      const booking = await api('/api/bookings', { method: 'POST', body: JSON.stringify({
+        name: form.get('name'),
+        phone: form.get('phone'),
+        payer: form.get('payer'),
+        seats,
+        showId: selectedShow,
+      }) });
       selected.clear();
       refreshSeats().catch(() => {});
       showBookingSuccess(booking);
@@ -197,24 +279,62 @@ function openBooking() {
       submit.textContent = '입금 대기 예약하기';
     }
   };
+  document.querySelector('#copy-account').onclick = copyAccountNumber;
+  document.querySelector('#copy-account-icon').onclick = copyAccountNumber;
+  document.querySelector('#privacy-open').onclick = () => {
+    const note = document.querySelector('#privacy-note');
+    const open = note.hidden;
+    note.hidden = !open;
+    document.querySelector('#privacy-open').setAttribute('aria-expanded', open ? 'true' : 'false');
+  };
+}
+function roadmapProgress(status) {
+  if (status === 'pending') return { current: 2, doneUntil: 1, halted: false, hint: '좌석은 잡아 두었어요. 입금 메모에 예약 코드와 이름을 적어주세요. 이미 입금했다면 운영진 확인을 기다려 주세요.' };
+  if (status === 'paid') return { current: 5, doneUntil: 4, halted: false, hint: '입금이 확인되고 입장권이 준비되었어요. 공연 당일 QR을 보여주면 입장할 수 있어요.' };
+  if (status === 'expired') return { current: 0, doneUntil: 1, halted: true, hint: '입금 시간이 지나 예약이 만료되었어요. 이 예약으로는 입장할 수 없어요.' };
+  if (status === 'cancelled') return { current: 0, doneUntil: 1, halted: true, hint: '입금 전에 취소된 예약이에요. 이 예약으로는 입장할 수 없어요.' };
+  if (status === 'refund_pending') return { current: 0, doneUntil: 3, halted: true, hint: '환불을 처리하고 있어요. 이 예약으로는 입장할 수 없어요.' };
+  if (status === 'refunded') return { current: 0, doneUntil: 3, halted: true, hint: '환불이 완료되었어요. 이 예약으로는 입장할 수 없어요.' };
+  return { current: 0, doneUntil: 0, halted: false, hint: '예약을 조회하면 지금 어느 단계인지, 다음에 무엇을 하면 되는지 알려드려요.' };
+}
+function renderEntryRoadmap(status = '') {
+  const progress = roadmapProgress(status);
+  document.querySelectorAll('.entry-roadmap li').forEach(item => {
+    const step = Number(item.dataset.step);
+    const done = step <= progress.doneUntil;
+    const current = step === progress.current;
+    item.classList.toggle('is-done', done);
+    item.classList.toggle('is-current', current);
+    item.classList.toggle('is-halted', progress.halted && !done);
+    if (current) item.setAttribute('aria-current', 'step');
+    else item.removeAttribute('aria-current');
+  });
+  const hint = document.querySelector('#roadmap-hint');
+  if (hint) hint.textContent = progress.hint;
 }
 function showBookingResult(booking) {
   const status = ({ paid: '입금 확인 · 예매 확정', pending: '입금 대기', expired: '예약 만료', cancelled: '취소됨 · 입금 전 예약', refund_pending: '취소 접수 · 환불 처리 중', refunded: '환불 완료' })[booking.status] || '상태 확인 필요';
   const badge = ['paid', 'refunded'].includes(booking.status) ? 'badge paid' : ['expired', 'cancelled'].includes(booking.status) ? 'badge expired' : 'badge';
   const details = showDetails(booking.showId || '1');
-  modal(`<button class="close" id="close-modal">×</button><div class="eyebrow">BOOKING LOOKUP</div><h2>예약 내역</h2><p class="sub">예약 코드 ${escapeHtml(booking.id)}</p><div class="bank-box"><strong>${booking.showId || '1'}공 · ${details.date} ${details.time}</strong><br><strong>${escapeHtml(booking.name)} · 좌석 ${escapeHtml(booking.seats.join(', '))}</strong><br>${booking.amount.toLocaleString()}원 · 입금자 ${escapeHtml(booking.payer)}<br><span class="${badge}">${status}</span></div><p class="hint">예약 코드와 연락처로 언제든 다시 조회할 수 있어요.</p>`);
+  const result = document.querySelector('#lookup-result');
+  result.hidden = false;
+  result.innerHTML = `<div class="lookup-summary"><strong>${booking.showId || '1'}공 · ${details.date} ${details.time}</strong>예약 코드 ${escapeHtml(booking.id)} · ${escapeHtml(booking.name)} · 좌석 ${escapeHtml(booking.seats.join(', '))}<br>${booking.amount.toLocaleString()}원 · 입금자 ${escapeHtml(booking.payer)}<br><span class="${badge}">${status}</span></div>`;
+  renderEntryRoadmap(booking.status);
+  result.scrollIntoView({ block: 'nearest' });
 }
 function openLookup(prefill = '') {
-  modal(`<button class="close" id="close-modal">×</button><div class="eyebrow">FIND YOUR BOOKING</div><h2>내 예약 조회</h2><p class="sub">예매할 때 입력한 연락처를 입력해주세요.</p><form id="lookup-form"><div class="form-grid"><div class="field"><label for="booking-code">예약 코드</label><input id="booking-code" name="id" required placeholder="STG-ABC123" value="${escapeHtml(prefill)}"></div><div class="field"><label for="lookup-phone">연락처</label><input id="lookup-phone" name="phone" required type="tel" placeholder="010-1234-5678"></div></div><button class="primary" type="submit">예약 조회하기</button><div id="lookup-error" class="error-text"></div></form>`);
-  document.querySelector('#lookup-form').onsubmit = async event => {
-    event.preventDefault();
-    const form = new FormData(event.currentTarget);
-    const error = document.querySelector('#lookup-error');
-    try {
-      const booking = await api('/api/booking-lookup', { method: 'POST', body: JSON.stringify({ id: form.get('id'), phone: form.get('phone') }) });
-      showBookingResult(booking);
-    } catch (problem) { error.textContent = problem.message; }
-  };
+  closeModal();
+  const code = document.querySelector('#booking-code');
+  const error = document.querySelector('#lookup-error');
+  const result = document.querySelector('#lookup-result');
+  if (code) code.value = prefill;
+  if (error) error.textContent = '';
+  if (result) {
+    result.hidden = true;
+    result.innerHTML = '';
+  }
+  renderEntryRoadmap();
+  location.hash = '#booking-lookup';
 }
 function showBookingView() {
   document.querySelector('#booking-view').classList.remove('hidden');
@@ -322,12 +442,12 @@ function openResetConfirmation() {
 document.querySelectorAll('.tab').forEach(tab => tab.addEventListener('click', () => {
   if (tab.dataset.view === 'booking') showBookingView();
 }));
-document.querySelector('#staff-link').addEventListener('click', async () => {
+document.querySelector('#staff-link')?.addEventListener('click', async () => {
   document.querySelector('#booking-view').classList.add('hidden');
   document.querySelector('#admin-view').classList.remove('hidden');
   await renderAdmin();
 });
-document.querySelector('#book-button').onclick = openBooking;
+document.querySelector('#book-button').onclick = () => openBooking();
 document.querySelectorAll('[data-booking-show]').forEach(button => button.addEventListener('click', async () => {
   selectedShow = button.dataset.bookingShow;
   selected.clear();
@@ -336,10 +456,90 @@ document.querySelectorAll('[data-booking-show]').forEach(button => button.addEve
   await refreshSeats();
 }));
 updateShowDetails();
-document.querySelector('#lookup-open').onclick = () => openLookup();
-document.querySelector('#hero-book')?.addEventListener('click', () => {
-  document.querySelector('.seat-panel')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+document.querySelector('#lookup-phone')?.addEventListener('input', event => formatPhoneInput(event.currentTarget));
+document.querySelector('#lookup-form')?.addEventListener('submit', async event => {
+  event.preventDefault();
+  const form = new FormData(event.currentTarget);
+  const error = document.querySelector('#lookup-error');
+  const result = document.querySelector('#lookup-result');
+  if (error) error.textContent = '';
+  try {
+    const booking = await api('/api/booking-lookup', { method: 'POST', body: JSON.stringify({ id: form.get('id'), phone: form.get('phone') }) });
+    showBookingResult(booking);
+  } catch (problem) {
+    if (result) {
+      result.hidden = true;
+      result.innerHTML = '';
+    }
+    renderEntryRoadmap();
+    error.textContent = problem.message;
+  }
 });
+document.querySelector('#hero-book')?.addEventListener('click', () => {
+  location.hash = '#booking-seats';
+});
+
+const bookingApp = document.querySelector('#booking-app');
+const bookingPages = {
+  '#booking-seats': document.querySelector('#booking-seats'),
+  '#booking-guide': document.querySelector('#booking-guide'),
+  '#booking-lookup': document.querySelector('#booking-lookup'),
+};
+const poster = document.querySelector('.poster');
+const footer = document.querySelector('.footer');
+const expandButton = document.querySelector('#seat-expand');
+const seatMap = document.querySelector('#seat-map');
+const seatMapModal = document.querySelector('#seat-map-modal');
+const seatMapDialog = seatMapModal.querySelector('.seat-map-dialog');
+const seatMapAnchor = document.createComment('seat-map-anchor');
+seatMap.before(seatMapAnchor);
+
+function setSeatExpanded(expanded) {
+  const wasOpen = !seatMapModal.hidden;
+  if (expanded) {
+    seatMapDialog.append(seatMap);
+    seatMapModal.hidden = false;
+  } else {
+    seatMapAnchor.after(seatMap);
+    seatMapModal.hidden = true;
+  }
+  document.body.classList.toggle('seat-map-open', expanded);
+  expandButton.setAttribute('aria-pressed', expanded ? 'true' : 'false');
+  expandButton.setAttribute('aria-label', expanded ? '좌석 축소' : '좌석 확대');
+  if (expanded || wasOpen) expandButton.focus();
+}
+
+function showSeatScreen() {
+  const page = bookingPages[location.hash];
+  const open = Boolean(page);
+  if (!open || location.hash !== '#booking-seats') setSeatExpanded(false);
+  poster?.classList.toggle('hidden', open);
+  bookingApp.classList.toggle('hidden', !open);
+  footer?.classList.toggle('hidden', !open);
+  if (!open) return;
+  Object.entries(bookingPages).forEach(([hash, section]) => {
+    section.classList.toggle('hidden', hash !== location.hash);
+  });
+  document.querySelectorAll('.booking-nav a').forEach(link => {
+    link.classList.toggle('active', link.getAttribute('href') === location.hash);
+  });
+  window.scrollTo(0, 0);
+}
+
+document.querySelector('#booking-back')?.addEventListener('click', () => {
+  history.pushState(null, '', location.pathname + location.search);
+  showSeatScreen();
+});
+expandButton?.addEventListener('click', () => setSeatExpanded(seatMapModal.hidden));
+seatMapModal?.addEventListener('click', event => {
+  if (event.target === seatMapModal) setSeatExpanded(false);
+});
+document.addEventListener('keydown', event => {
+  if (seatMapModal.hidden) return;
+  if (event.key === 'Escape') setSeatExpanded(false);
+});
+window.addEventListener('hashchange', showSeatScreen);
+showSeatScreen();
 refreshSeats();
 setInterval(() => { if (!document.querySelector('#booking-view').classList.contains('hidden')) refreshSeats().catch(() => {}); }, 12000);
 setInterval(() => {
