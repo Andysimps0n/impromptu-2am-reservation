@@ -6,7 +6,6 @@
   <meta name="theme-color" content="#f5f3ee" />
   <meta name="referrer" content="no-referrer" />
   <title>즉흥적 새벽 2시 — How’d you feel?</title>
-  <link rel="stylesheet" href="https://cdn.jsdelivr.net/gh/orioncactus/pretendard@v1.3.9/dist/web/static/pretendard.min.css">
   <link rel="stylesheet" href="/styles.css">
 </head>
 <body>
@@ -26,86 +25,15 @@
         <button class="staff-link" type="button" id="staff-link">운영진</button>
       </nav>
     </header>
-    <main id="booking-view">
-      <section class="hero">
-        <div class="hero-banner">
-          <div class="hero-copy">
-            <!-- <div class="hero-badge">2026 동아리 정기공연</div> -->
-            <h1>How'd<br>You <span>Feel</span></h1>
-            <p>그날 밤, 우리가 느낀 모든 감정을 무대 위로. 당신은 어떻게 느꼈나요?</p>
-            <div class="hero-meta">
-              <span>11.21 (토)–11.22 (일)</span>
-              <span>총 3회 공연 · 회차 선택</span>
-              <span>학관 104호</span>
-              <span>전석 6,500원</span>
-            </div>
-            <button class="hero-cta" type="button" id="hero-book">좌석 예매하기 →</button>
-          </div>
-          <img class="hero-logo" src="즉새두로고1.png" alt="즉새두 2AM 로고">
-        </div>
-      </section>
-      <section class="content">
-        <div class="panel seat-panel">
-          <div class="section-head">
-            <div>
-              <h2>좌석을 선택해주세요</h2>
-              <p>1열은 운영진석 · 2–11열은 6석씩 · 마지막 열은 좌우 4석 · 회차별 선착순</p>
-            </div>
-            <div class="price-tag">전석 6,500원</div>
-          </div>
-          <div id="booking-closed-banner" class="booking-closed" role="status" hidden>
-            <strong>현재 예매 접수를 받고 있지 않습니다.</strong>
-            <span>예매 기간에 다시 방문해주세요. 운영진이 접수를 열면 좌석을 선택할 수 있습니다.</span>
-          </div>
-          <div class="show-picker" role="group" aria-label="공연 회차 선택">
-            <button class="show-option active" data-booking-show="1">1공</button>
-            <button class="show-option" data-booking-show="2">2공</button>
-            <button class="show-option" data-booking-show="3">3공</button>
-          </div>
-          <div class="stage">S T A G E</div>
-          <div id="seat-grid" class="seat-grid"></div>
-          <div class="legend">
-            <span><i class="dot"></i> 선택 가능</span>
-            <span><i class="dot sel"></i> 선택됨</span>
-            <span><i class="dot sold"></i> 예매 완료</span>
-            <span><i class="dot held"></i> 입금 대기</span>
-            <span><i class="dot reserved"></i> 운영진 보유석</span>
-          </div>
-        </div>
-        <div class="side-column">
-          <aside class="panel sidebar">
-            <h3>예매 정보</h3>
-            <div class="info-row"><span>공연 일시</span><strong id="show-date">2026년 11월 21일 토요일</strong></div>
-            <div class="info-row"><span>공연 시간</span><strong id="show-time">오후 8시</strong></div>
-            <div class="info-row"><span>공연 장소</span><strong>학관 104호</strong></div>
-            <div id="selection" class="summary-empty">좌석을 선택하면<br>예매 정보가 여기에 표시돼요.</div>
-            <div class="total"><span>총 예매 금액</span><strong id="total">0원</strong></div>
-            <button id="book-button" class="primary" disabled>좌석을 선택해주세요</button>
-            <!-- <p class="hint">입금 확인 후 예매가 확정됩니다.</p> -->
-            <button id="lookup-open" class="secondary">내 예약 조회</button>
-          </aside>
-          <section class="panel guide" aria-labelledby="guide-title">
-            <h2 id="guide-title">안내 사항</h2>
-            <div class="notice">
-              <strong>입금 계좌</strong>
-              <p>카카오뱅크 <b>3333376900284</b><br>예약 코드와 예매자 이름을 입금 메모에 적어주세요.</p>
-            </div>
-            <div class="notice">
-              <strong>문의</strong>
-              <p>예매와 환불 문의는 인스타그램 <a class="instagram-link" href="https://instagram.com/impromptu__2am" target="_blank" rel="noopener">@impromptu__2am</a> DM으로 보내주세요.</p>
-            </div>
-          </section>
-        </div>
-      </section>
-    </main>
+    <main id="booking-view"></main>
     <main id="admin-view" class="admin hidden"></main>
     <footer class="footer">
       <span>© 2026 즉흥적 새벽 2시 · How’d you feel?</span>
-      <span><a class="instagram-link" href="https://instagram.com/impromptu__2am" target="_blank" rel="noopener">@impromptu__2am</a> DM으로 문의해주세요.</span>
+      <span><a href="/privacy">개인정보 처리방침</a> · <a class="instagram-link" href="https://instagram.com/impromptu__2am" target="_blank" rel="noopener">@impromptu__2am</a> DM</span>
     </footer>
   </div>
   <div id="modal-root"></div>
   <div id="toast-root"></div>
-  <script src="/app.js?v=direct-ticket-link-20261016" defer></script>
+  <script src="/app.js?v=react-admin-migration-20261016" defer></script>
 </body>
 </html>
