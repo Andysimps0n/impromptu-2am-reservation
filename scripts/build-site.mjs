@@ -1,24 +1,28 @@
 import { mkdir, readFile, readdir, writeFile, copyFile } from 'node:fs/promises';
 import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { build } from 'esbuild';
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const files = await readdir(root);
 const logoName = files.find(name => name.normalize('NFC').includes('로고2.png'));
 const heroLogoName = files.find(name => name.normalize('NFC').includes('로고1.png'));
 if (!logoName || !heroLogoName) throw new Error('Club logo PNG was not found');
-const [template, sourceHtml, client, styles, hosting, logo, heroLogo] = await Promise.all([
+const [template, sourceHtml, privacyHtml, styles, hosting, logo, heroLogo] = await Promise.all([
   readFile(resolve(root, 'worker/index.js'), 'utf8'),
   readFile(resolve(root, 'index.html'), 'utf8'),
-  readFile(resolve(root, 'app.js'), 'utf8'),
+  readFile(resolve(root, 'privacy.html'), 'utf8'),
   readFile(resolve(root, 'styles.css'), 'utf8'),
   readFile(resolve(root, '.openai/hosting.json'), 'utf8'),
   readFile(resolve(root, logoName)),
   readFile(resolve(root, heroLogoName)),
 ]);
-if (!template.includes('__INDEX_HTML__') || !template.includes('__APP_JS__') || !template.includes('__SITE_CSS__') || !template.includes('__LOGO_PNG__') || !template.includes('__HERO_LOGO_PNG__')) throw new Error('Worker asset placeholders are missing');
+const clientBundle = await build({ entryPoints: [resolve(root, 'app.js')], bundle: true, format: 'iife', platform: 'browser', target: 'es2020', minify: true, write: false });
+const client = clientBundle.outputFiles[0].text;
+if (!template.includes('__INDEX_HTML__') || !template.includes('__PRIVACY_HTML__') || !template.includes('__APP_JS__') || !template.includes('__SITE_CSS__') || !template.includes('__LOGO_PNG__') || !template.includes('__HERO_LOGO_PNG__')) throw new Error('Worker asset placeholders are missing');
 const output = template
   .replace('__INDEX_HTML__', () => JSON.stringify(sourceHtml))
+  .replace('__PRIVACY_HTML__', () => JSON.stringify(privacyHtml))
   .replace('__APP_JS__', () => JSON.stringify(client))
   .replace('__SITE_CSS__', () => JSON.stringify(styles))
   .replace('__LOGO_PNG__', () => JSON.stringify(logo.toString('base64')))
