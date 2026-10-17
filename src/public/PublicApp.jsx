@@ -12,6 +12,10 @@ const api = async (path, options = {}) => {
 
 const rows = Array.from({ length: 12 }, (_, i) => String.fromCharCode(65 + i));
 const statusText = { paid: '입금 확인 · 예매 확정', pending: '입금 대기', expired: '예약 만료', cancelled: '취소됨 · 입금 전 예약', refund_pending: '취소 접수 · 환불 처리 중', refunded: '환불 완료' };
+function withoutYear(label) {
+  return String(label || '').replace(/^\d{4}년\s*/, '');
+}
+
 const ROADMAP_STEPS = [
   { step: 1, title: '좌석 선택' },
   { step: 2, title: '입금' },
@@ -20,7 +24,7 @@ const ROADMAP_STEPS = [
   { step: 5, title: 'QR 스캔 후 입장' },
 ];
 
-function pageFromHash(hash) {
+export function pageFromHash(hash) {
   const ticket = /^#t=([A-Za-z0-9_-]{16}|[A-Za-z0-9_-]{22})$/.exec(hash);
   if (ticket) return { name: 'ticket', token: ticket[1] };
   if (hash === '#booking-guide') return { name: 'guide' };
@@ -51,7 +55,6 @@ export function PublicApp() {
   const [seatData, setSeatData] = useState(null);
   const [selectedSeats, setSelectedSeats] = useState([]);
   const [seatError, setSeatError] = useState('');
-  const [seatExpanded, setSeatExpanded] = useState(false);
   const [lookupPrefill, setLookupPrefill] = useState('');
   const [modal, setModal] = useState(null);
   const [toast, setToast] = useState('');
@@ -100,20 +103,6 @@ export function PublicApp() {
   useEffect(() => { document.title = event ? `${event.title} — ${event.subtitle || 'How’d you feel?'}` : '즉흥적 새벽 두 시 — How’d you feel?'; }, [event]);
   useEffect(() => { if (!toast) return; const timer = setTimeout(() => setToast(''), 6000); return () => clearTimeout(timer); }, [toast]);
   useEffect(() => {
-    const footer = document.querySelector('.footer');
-    footer?.classList.toggle('hidden', page.name === 'home' || page.name === 'ticket');
-  }, [page.name]);
-  useEffect(() => {
-    document.body.classList.toggle('seat-map-open', seatExpanded);
-    return () => document.body.classList.remove('seat-map-open');
-  }, [seatExpanded]);
-  useEffect(() => { if (page.name !== 'seats') setSeatExpanded(false); }, [page.name]);
-  useEffect(() => {
-    const onKey = event => { if (event.key === 'Escape' && seatExpanded) setSeatExpanded(false); };
-    document.addEventListener('keydown', onKey);
-    return () => document.removeEventListener('keydown', onKey);
-  }, [seatExpanded]);
-  useEffect(() => {
     if (page.name !== 'ticket') return;
     api('/api/ticket-link', { method: 'POST', body: JSON.stringify({ token: page.token }) })
       .then(data => setModal({ type: 'linked-ticket', data }))
@@ -146,8 +135,6 @@ export function PublicApp() {
       selectedSeats={selectedSeats}
       bookingOpen={bookingOpen}
       onToggleSeat={toggleSeat}
-      expanded={seatExpanded}
-      onToggleExpand={() => setSeatExpanded(open => !open)}
     />
   );
 
@@ -178,7 +165,7 @@ export function PublicApp() {
                   {seatError && <button className="admin-action" type="button" onClick={() => { refreshEvent(); refreshSeats(); }}>다시 시도</button>}
                 </div>
               )}
-              {!seatExpanded && seatMap}
+              {seatMap}
             </div>
             <div className="side-column">
               <aside className="panel sidebar">
@@ -202,13 +189,6 @@ export function PublicApp() {
         {page.name === 'guide' && <GuidePage />}
         {page.name === 'lookup' && <LookupPage prefill={lookupPrefill} onLookup={submitLookup} />}
       </section>
-    )}
-    {seatExpanded && (
-      <div className="seat-map-modal" onMouseDown={event => { if (event.target === event.currentTarget) setSeatExpanded(false); }}>
-        <div className="seat-map-dialog" role="dialog" aria-modal="true" aria-label="좌석 배치">
-          {seatMap}
-        </div>
-      </div>
     )}
     {toast && <div className="toast" role="status">{toast}</div>}
     {modal?.type === 'booking' && <BookingDialog event={event} session={session} seats={selectedSeats} price={price} onClose={() => setModal(null)} onSubmit={submitBooking} />}
@@ -298,28 +278,40 @@ function Poster() {
   );
 }
 
-function SeatMap({ sessions, selectedShow, onChooseSession, seatData, selectedSeats, bookingOpen, onToggleSeat, expanded, onToggleExpand }) {
+function SeatMap({ sessions, selectedShow, onChooseSession, seatData, selectedSeats, bookingOpen, onToggleSeat }) {
+  const selected = sessions.find(item => item.id === selectedShow);
+
   return (
     <div className="seat-map">
       <div className="stage-line">
-        <div className="show-guide" role="group" aria-label="공연 회차 선택">
+        <div className="show-guide" aria-label="공연 일정">
           {sessions.map(item => (
-            <button key={item.id} className={`show-guide-item ${item.id === selectedShow ? 'active' : ''}`} type="button" onClick={() => onChooseSession(item.id)}>
-              <strong>{item.sortOrder}공</strong>
-              <span>{item.dateLabel} {item.timeLabel}</span>
-            </button>
+            <div key={item.id} className="show-guide-item">
+              <span>{item.sortOrder}공</span>
+              <strong>{withoutYear(item.dateLabel)} {item.timeLabel}</strong>
+            </div>
           ))}
         </div>
-        <button className="seat-expand" type="button" aria-pressed={expanded} aria-label={expanded ? '좌석 축소' : '좌석 확대'} onClick={onToggleExpand}>
-          <svg className="icon-expand" viewBox="0 0 24 24" aria-hidden="true">
-            <path d="M15 3h6v6M21 3l-7 7M9 21H3v-6M3 21l7-7" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"/>
-          </svg>
-          <svg className="icon-collapse" viewBox="0 0 24 24" aria-hidden="true">
-            <path d="M4 14h6v6M10 14l-7 7M20 10h-6V4M14 10l7-7" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"/>
-          </svg>
-        </button>
+        <div className="show-chips" role="radiogroup" aria-label="공연 회차 선택">
+          {sessions.map(item => {
+            const active = item.id === selectedShow;
+            return (
+              <button
+                key={item.id}
+                className={`show-chip ${active ? 'active' : ''}`}
+                type="button"
+                role="radio"
+                aria-checked={active}
+                onClick={() => onChooseSession(item.id)}
+              >
+                {item.sortOrder}공
+              </button>
+            );
+          })}
+        </div>
       </div>
-      <div className="seat-grid">
+      <p className="seat-map-caption">{selected ? `${selected.sortOrder}공 좌석` : '회차를 먼저 선택해주세요'}</p>
+      <div className={`seat-grid ${selected ? '' : 'is-locked'}`}>
         {rows.map(letter => {
           const count = letter === 'L' ? 8 : 12;
           return (
@@ -333,7 +325,7 @@ function SeatMap({ sessions, selectedShow, onChooseSession, seatData, selectedSe
                 return (
                   <React.Fragment key={seat}>
                     {index + 1 === (count === 8 ? 5 : 7) && <span className="aisle" aria-hidden="true" />}
-                    <button type="button" className={`seat ${picked ? 'selected' : state === 'available' ? '' : state}`} disabled={!bookingOpen || state !== 'available'} title={`좌석 ${letter}열 ${index + 1}번`} aria-label={`좌석 ${letter}열 ${index + 1}번 ${label}`} onClick={() => onToggleSeat(seat)}>{String(index + 1).padStart(2, '0')}</button>
+                    <button type="button" className={`seat ${picked ? 'selected' : state === 'available' ? '' : state}`} disabled={!selected || !bookingOpen || state !== 'available'} title={`좌석 ${letter}열 ${index + 1}번`} aria-label={`좌석 ${letter}열 ${index + 1}번 ${label}`} onClick={() => onToggleSeat(seat)}>{String(index + 1).padStart(2, '0')}</button>
                   </React.Fragment>
                 );
               })}
@@ -475,9 +467,10 @@ function Dialog({ children, onClose, className = '' }) {
   return <div className="modal-backdrop" onMouseDown={event => event.target === event.currentTarget && onClose()}><section className={`modal ${className}`} role="dialog" aria-modal="true"><button className="close" type="button" aria-label="닫기" onClick={onClose}>×</button>{children}</section></div>;
 }
 
-function BookingDialog({ event, session, seats, price, onClose, onSubmit }) {
+function BookingDialog({ session, seats, price, onClose, onSubmit }) {
   const [values, setValues] = useState({ name: '', phone: '', payer: '' });
   const [errors, setErrors] = useState({});
+  const [privacy, setPrivacy] = useState(false);
   const [busy, setBusy] = useState(false);
   const [serverError, setServerError] = useState('');
   const validate = (field, value) => {
@@ -487,12 +480,61 @@ function BookingDialog({ event, session, seats, price, onClose, onSubmit }) {
     if (field === 'payer' && !text) return '실제 입금할 분의 이름을 입력해주세요.';
     if (field === 'payer' && text.length > 40) return '입금자명은 40자 이내로 입력해주세요.';
     if (field === 'phone' && !text) return '연락처를 입력해주세요. 예: 010-1234-5678';
-    if (field === 'phone' && (text.replace(/\D/g, '').length < 10 || text.replace(/\D/g, '').length > 11)) return '연락처 숫자를 10~11자리로 입력해주세요. 예: 010-1234-5678';
+    if (field === 'phone' && (text.replace(/\D/g, '').length < 10 || text.replace(/\D/g, '').length > 11)) return '연락처 숫자를 10~11자리로 입력해주세요.';
     return '';
   };
-  const change = (field, value) => { setValues(current => ({ ...current, [field]: value })); if (errors[field]) setErrors(current => ({ ...current, [field]: validate(field, value) })); };
-  const submit = async event => { event.preventDefault(); const next = Object.fromEntries(Object.entries(values).map(([field, value]) => [field, validate(field, value)])); setErrors(next); if (Object.values(next).some(Boolean)) return; setBusy(true); setServerError(''); try { await onSubmit(values); } catch (problem) { setServerError(problem.message); setBusy(false); } };
-  return <Dialog onClose={onClose}><div className="eyebrow">BOOK YOUR SEAT</div><h2>예매 정보를 입력해주세요</h2><p className="sub">{session?.sortOrder}공 · {session?.dateLabel} {session?.timeLabel}<br />{seats.join(', ')} · {(seats.length * price).toLocaleString()}원</p><div className="form-guidance"><strong>입력을 마치고 ‘입금 대기 예약하기’를 눌러주세요.</strong><span>이름과 입금자명을 적고, 연락처는 숫자 10~11자리로 입력하면 됩니다. 입력이 잘못된 칸은 아래에 안내해드려요.</span></div><form className="booking-form" noValidate onSubmit={submit}><div className="form-grid">{[['name','예매자 이름','예: 홍길동','예매할 분의 이름을 입력해주세요.'],['phone','연락처','예: 010-1234-5678','예약 조회에 사용하며, 예매가 확정되면 안내 문자를 한 번 보내드립니다.'],['payer','입금자명','예: 홍길동','계좌에 실제로 송금할 분의 이름을 적어주세요.']].map(([key,label,placeholder,help]) => <div className="field" key={key}><label htmlFor={`book-${key}`}>{label} <span>필수</span></label><input id={`book-${key}`} name={key} autoComplete={key === 'phone' ? 'tel' : 'name'} type={key === 'phone' ? 'tel' : 'text'} inputMode={key === 'phone' ? 'tel' : undefined} maxLength={key === 'phone' ? 20 : 40} placeholder={placeholder} value={values[key]} aria-invalid={Boolean(errors[key])} onChange={e => change(key, e.target.value)} onBlur={e => setErrors(current => ({ ...current, [key]: validate(key, e.target.value) }))} /><small className="field-help">{help}</small>{errors[key] && <small className="field-error" aria-live="polite">{errors[key]}</small>}</div>)}</div><div className="bank-box"><strong>입금 계좌 안내</strong><br />카카오뱅크 <strong>3333376900284</strong><br />입금 기한: 예약 후 30분 이내</div><p className="hint">예매자의 이름·연락처·입금자명은 공연 종료 후 90일간 보관한 뒤 자동 삭제합니다. 환불 처리 중인 예약은 환불 완료 후 90일간 보관합니다. <a href="/privacy" target="_blank" rel="noopener">개인정보 처리방침</a></p>{serverError && <div className="form-error-summary" role="alert">{serverError}</div>}<button className="primary" disabled={busy}>{busy ? '예약 처리 중…' : '입금 대기 예약하기'}</button><p className="hint">회차별 연락처 하나당 최대 2석입니다. 입력한 연락처로 예약을 다시 조회할 수 있어요.</p></form></Dialog>;
+  const change = (field, value) => {
+    setValues(current => ({ ...current, [field]: value }));
+    if (errors[field]) setErrors(current => ({ ...current, [field]: validate(field, value) }));
+  };
+  const copyAccount = async () => {
+    try { await navigator.clipboard.writeText('3333376900284'); } catch { /* ignore */ }
+  };
+  const submit = async event => {
+    event.preventDefault();
+    const next = Object.fromEntries(Object.entries(values).map(([field, value]) => [field, validate(field, value)]));
+    setErrors(next);
+    if (Object.values(next).some(Boolean)) return;
+    if (!privacy) { setServerError('개인정보 수집에 동의해주세요.'); return; }
+    setBusy(true);
+    setServerError('');
+    try { await onSubmit(values); } catch (problem) { setServerError(problem.message); setBusy(false); }
+  };
+  return (
+    <Dialog onClose={onClose}>
+      <h2>좌석 예매하기</h2>
+      <p className="sub">{session?.dateLabel} {session?.timeLabel}<br />{seats.map(seat => `${seat}번`).join(', ')}</p>
+      <div className="bank-box">
+        {seats.length}석 · {(seats.length * price).toLocaleString()}원<br />
+        <span className="account-line">카카오뱅크 3333376900284
+          <button className="account-icon" type="button" aria-label="계좌번호 복사" onClick={copyAccount}>
+            <svg viewBox="0 0 24 24" aria-hidden="true">
+              <rect x="8" y="8" width="12" height="13" rx="2" fill="none" stroke="currentColor" strokeWidth="1.8"/>
+              <path d="M16 8V6a2 2 0 0 0-2-2H6a2 2 0 0 0-2 2v11a2 2 0 0 0 2 2h2" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round"/>
+            </svg>
+          </button>
+        </span><br />
+        입금 기한: 예약 후 30분 이내
+      </div>
+      <form className="booking-form" noValidate onSubmit={submit}>
+        <div className="form-grid">
+          {[['name', '예매자 이름', '예: 홍길동'], ['phone', '연락처', '예: 010-1234-5678'], ['payer', '입금자명', '예: 홍길동']].map(([key, label, placeholder]) => (
+            <div className="field" key={key}>
+              <label htmlFor={`book-${key}`}>{label}</label>
+              <input id={`book-${key}`} name={key} autoComplete={key === 'phone' ? 'tel' : 'name'} type={key === 'phone' ? 'tel' : 'text'} inputMode={key === 'phone' ? 'tel' : undefined} maxLength={key === 'phone' ? 20 : 40} placeholder={placeholder} value={values[key]} aria-invalid={Boolean(errors[key])} onChange={e => change(key, e.target.value)} onBlur={e => setErrors(current => ({ ...current, [key]: validate(key, e.target.value) }))} />
+              {errors[key] && <small className="field-error" aria-live="polite">{errors[key]}</small>}
+            </div>
+          ))}
+        </div>
+        {serverError && <div className="form-error-summary" role="alert">{serverError}</div>}
+        <button className="primary" disabled={busy}>{busy ? '예약 처리 중…' : '입금 대기 예약하기'}</button>
+        <label className="privacy-agree">
+          <input type="checkbox" checked={privacy} onChange={event => setPrivacy(event.target.checked)} />
+          개인정보 수집에 동의합니다. <a href="/privacy" target="_blank" rel="noopener">개인정보 수집 안내</a>
+        </label>
+      </form>
+    </Dialog>
+  );
 }
 
 function BookingSuccess({ booking, session, onClose, onLookup }) {

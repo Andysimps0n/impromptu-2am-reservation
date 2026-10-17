@@ -13,23 +13,19 @@
   --shadow:0 18px 55px #1f205912;
 }
 
-@font-face {
-  font-family:"Cafe24 Ssurround";
-  src:url("fonts/Cafe24Ssurround.woff") format("woff");
-  font-weight:400;
-  font-style:normal;
-  font-display:swap;
-}
-
 * {
   box-sizing:border-box;
+}
+
+html,body {
+  overflow-x:hidden;
 }
 
 body {
   margin:0;
   background:var(--paper);
   color:var(--ink);
-      font-family:'Apple SD Gothic Neo',Pretendard,sans-serif;
+  font-family:'Apple SD Gothic Neo',Pretendard,sans-serif;
 }
 
 button,input {
@@ -260,6 +256,8 @@ button {
   grid-template-columns:minmax(0,1fr) 312px;
   gap:24px;
   align-items:start;
+  min-width:0;
+  width:100%;
   padding-bottom:64px;
 }
 
@@ -274,6 +272,8 @@ button {
   border:1px solid #e9e7df;
   border-radius:18px;
   box-shadow:var(--shadow);
+  min-width:0;
+  max-width:100%;
 }
 
 .seat-panel {
@@ -288,67 +288,91 @@ button {
 .section-head h2 {
   font-size:24px;
   margin:0;
+  font-weight:700;
   letter-spacing:-.5px;
 }
 
 .stage-line {
-  display:flex;
-  align-items:center;
-  justify-content:space-between;
-  gap:12px;
-  margin:8px 0 16px;
+  min-width:0;
+  width:100%;
+  margin:8px 0 14px;
 }
 
 .show-guide {
   display:flex;
-  align-items:stretch;
-  width:fit-content;
+  flex-direction:column;
   min-width:0;
+  margin:0 0 12px;
+}
+
+.show-guide-item {
+  display:flex;
+  width:100%;
+  align-items:center;
+  justify-content:space-between;
+  gap:12px;
   margin:0;
+  padding:8px 0;
+  border-bottom:1px solid var(--line);
+  color:var(--muted);
+  font-size:12px;
+}
+
+.show-guide-item strong {
+  color:var(--ink);
+  font-weight:600;
+  text-align:right;
+}
+
+.show-chips {
+  display:flex;
+  align-items:stretch;
+  min-width:0;
   overflow:hidden;
   background:var(--paper);
   border:1px solid var(--line);
   border-radius:12px;
 }
 
-.show-guide-item {
+.show-chip {
   display:flex;
-  flex-direction:column;
+  flex:1;
   align-items:center;
   justify-content:center;
-  gap:2px;
+  min-width:0;
   margin:0;
-  padding:8px 12px;
+  padding:10px 8px;
   border:0;
   background:transparent;
-  text-align:center;
-  color:inherit;
+  color:var(--ink);
+  font-size:13px;
+  font-weight:800;
+  cursor:pointer;
 }
 
-.show-guide-item + .show-guide-item {
+.show-chip + .show-chip {
   border-left:1px solid var(--line);
 }
 
-.show-guide-item strong {
+.show-chip:hover {
+  background:#f3f1ea;
+}
+
+.show-chip.active {
+  background:var(--brand-ink);
+  color:#fff;
+}
+
+.seat-map-caption {
+  margin:0 0 12px;
   color:var(--ink);
   font-size:13px;
   font-weight:800;
 }
 
-.show-guide-item span {
-  color:var(--muted);
-  font-size:12px;
-  line-height:1.4;
-  white-space:nowrap;
-}
-
-.show-guide-item.active {
-  background:var(--brand-ink);
-}
-
-.show-guide-item.active strong,
-.show-guide-item.active span {
-  color:#fff;
+.seat-grid.is-locked {
+  opacity:.45;
+  pointer-events:none;
 }
 
 .seat-grid {
@@ -781,6 +805,9 @@ button {
 
 .modal {
   width:min(460px,100%);
+  max-width:100%;
+  max-height:calc(100dvh - 40px);
+  overflow:auto;
   background:var(--cream);
   border-radius:20px;
   padding:32px;
@@ -820,6 +847,20 @@ button {
   margin-top:2px;
 }
 
+.privacy-agree {
+  display:flex;
+  align-items:center;
+  gap:8px;
+  margin-top:14px;
+  color:var(--muted);
+  font-size:12px;
+}
+
+.privacy-agree a {
+  color:var(--ink);
+  font-weight:800;
+}
+
 .close {
   position:absolute;
   right:16px;
@@ -833,6 +874,7 @@ button {
 .modal h2 {
   font-size:24px;
   margin:7px 0;
+  font-weight:800;
 }
 
 .modal .sub {
@@ -905,6 +947,10 @@ button {
 
 .account-icon {
   display:inline-flex;
+  align-items:center;
+  justify-content:center;
+  width:20px;
+  height:20px;
   color:var(--brand-ink);
 }
 
@@ -1193,15 +1239,32 @@ button {
     align-self:flex-end;
   }
   .content {
-    grid-template-columns:1fr;
+    grid-template-columns:minmax(0,1fr);
     gap:16px;
   }
+  .seat-panel,
+  .sidebar,
+  .lookup-panel,
+  .guide {
+    width:100%;
+    max-width:100%;
+  }
+  .show-guide-item {
+    font-size:12px;
+  }
+  .legend {
+    gap:8px 10px;
+  }
   .modal-backdrop {
-    padding:56px 16px;
+    padding:12px;
+    align-items:center;
+    justify-items:center;
   }
   .modal {
-    max-height:calc(100dvh - 112px);
-    overflow:auto;
+    width:100%;
+    max-height:calc(100dvh - 24px);
+    padding:22px 18px 18px;
+    border-radius:20px;
   }
   .order {
     grid-template-columns:1fr 1fr;
@@ -1287,7 +1350,7 @@ button {
   gap:14px 16px;
   max-width:450px;
   min-height:190px;
-  margin:0 auto;
+  margin: 30px auto;
 }
 
 .seat {
@@ -1439,6 +1502,8 @@ button {
 }
 
 .booking-app {
+  min-width:0;
+  max-width:100%;
   padding-bottom:64px;
 }
 
@@ -1480,10 +1545,10 @@ button {
 }
 
 .booking-nav a {
-  color:#fff;
+  color:#f3f4ff;
   text-decoration:none;
   font-size:14px;
-  font-weight:700;
+  font-weight: 600;
   padding:8px 12px;
   white-space:nowrap;
 }
@@ -1653,121 +1718,6 @@ button {
   line-height:1.6;
 }
 
-.seat-expand {
-  flex:none;
-  z-index:1;
-  display:grid;
-  place-items:center;
-  width:36px;
-  height:36px;
-  padding:0;
-  border:0;
-  background:none;
-  box-shadow:none;
-  color:var(--brand-ink);
-}
-
-.seat-expand svg {
-  width:18px;
-  height:18px;
-  display:block;
-}
-
-.seat-expand .icon-collapse,
-.seat-expand[aria-pressed="true"] .icon-expand {
-  display:none;
-}
-
-.seat-expand[aria-pressed="true"] .icon-collapse {
-  display:block;
-}
-
-body.seat-map-open {
-  overflow:hidden;
-}
-
-.seat-map-modal {
-  position:fixed;
-  inset:0;
-  z-index:40;
-  width:100%;
-  height:100%;
-  max-width:100vw;
-  max-height:100vh;
-  padding:0;
-  overflow:hidden;
-  background:var(--cream);
-}
-
-.seat-map-modal[hidden] {
-  display:none;
-}
-
-.seat-map-dialog {
-  box-sizing:border-box;
-  display:flex;
-  flex-direction:column;
-  width:100%;
-  height:100%;
-  max-width:100vw;
-  max-height:100vh;
-  padding:16px 16px 12px;
-  overflow:hidden;
-  background:var(--cream);
-}
-
-.seat-map-modal .seat-map {
-  display:flex;
-  flex-direction:column;
-  flex:1;
-  min-width:0;
-  min-height:0;
-  overflow:hidden;
-}
-
-.seat-map-modal .stage-line {
-  flex:none;
-  margin-top:0;
-}
-
-.seat-map-modal .seat-grid {
-  flex:none;
-  width:min(100%,920px);
-  max-width:100%;
-  min-width:0;
-  margin-inline:auto;
-  gap:clamp(4px,.7vh,8px);
-}
-
-.seat-map-modal .seat-row {
-  flex:none;
-  min-width:0;
-  width:100%;
-  grid-template-columns:22px repeat(6,minmax(0,1fr)) 14px repeat(6,minmax(0,1fr));
-  gap:clamp(3px,.5vw,8px);
-}
-
-.seat-map-modal .seat-row.short-row {
-  width:68%;
-  min-width:0;
-  margin-inline:auto;
-  grid-template-columns:22px repeat(4,minmax(0,1fr)) 14px repeat(4,minmax(0,1fr));
-}
-
-.seat-map-modal .seat {
-  width:100%;
-  height:clamp(28px,4.2vh,46px);
-  min-width:0;
-  min-height:0;
-  aspect-ratio:auto;
-  font-size:clamp(10px,1.4vh,14px);
-}
-
-.seat-map-modal .legend {
-  flex:none;
-  margin:30px 0 0;
-}
-
 .show-option {
   border:0;
   border-radius:9px;
@@ -1883,8 +1833,9 @@ body.seat-map-open {
 }
 
 @media(max-width:480px) {
-  .seat-panel {
-    padding: 24px;
+  .seat-panel,
+  .sidebar {
+    padding: 27px;
   }
   .seat-row {
     grid-template-columns:16px repeat(6,minmax(0,1fr)) 8px repeat(6,minmax(0,1fr));
@@ -2101,8 +2052,8 @@ body.seat-map-open {
   flex-direction:column;
   margin:0;
   color:var(--brand);
-  font-family:"Cafe24 Ssurround","Apple SD Gothic Neo",Pretendard,sans-serif;
-  font-weight:400;
+  font-family:'Apple SD Gothic Neo',Pretendard,sans-serif;
+  font-weight:800;
   font-size:clamp(84px,13vh,140px);
   line-height:.9;
   letter-spacing:-.04em;
@@ -2164,7 +2115,8 @@ body.seat-map-open {
 .poster-series {
   margin:32px 0 0;
   color:#fbfbfc;
-  font-family:"Cafe24 Ssurround","Apple SD Gothic Neo",Pretendard,sans-serif;
+  font-family:'Apple SD Gothic Neo',Pretendard,sans-serif;
+  font-weight:800;
   font-size:clamp(22px,2.6vw,34px);
   line-height:1;
   letter-spacing:.02em;
@@ -2173,8 +2125,8 @@ body.seat-map-open {
 .poster-copy h2 {
   margin:0;
   color:#fbfbfc;
-  font-family:"Cafe24 Ssurround","Apple SD Gothic Neo",Pretendard,sans-serif;
-  font-weight:400;
+  font-family:'Apple SD Gothic Neo',Pretendard,sans-serif;
+  font-weight:800;
   font-size:clamp(64px,9.2vw,128px);
   line-height:.92;
   letter-spacing:0;
@@ -2184,7 +2136,7 @@ body.seat-map-open {
   display:flex;
   align-items:center;
   justify-content:center;
-  gap:.06em;
+  /* gap:.06em; */
 }
 
 .poster-line + .poster-line {
@@ -2221,7 +2173,8 @@ body.seat-map-open {
 .poster-show {
   margin:24px 0 0;
   color:#bbd2f6;
-  font-family:"Cafe24 Ssurround","Apple SD Gothic Neo",Pretendard,sans-serif;
+  font-family:'Apple SD Gothic Neo',Pretendard,sans-serif;
+  font-weight:800;
   font-size:clamp(26px,3.6vw,48px);
   line-height:1;
   letter-spacing:-1px;
@@ -2288,9 +2241,9 @@ body.seat-map-open {
   border-radius:18px;
   background:#f8ca11;
   color:var(--brand-ink);
-  font-family:"Cafe24 Ssurround","Apple SD Gothic Neo",Pretendard,sans-serif;
+  font-family:'Apple SD Gothic Neo',Pretendard,sans-serif;
   font-size:22px;
-  font-weight:400;
+  font-weight:800;
   letter-spacing:-.03em;
   text-decoration:none;
   white-space:nowrap;
@@ -2339,14 +2292,14 @@ body.seat-map-open {
     bottom:0;
     width:100%;
     height:auto;
-    max-height:none;
+    max-height:42vw;
     transform:none;
-    object-fit:unset;
+    object-fit:contain;
+    object-position:center bottom;
   }
 
   .poster-scene {
-    top:auto;
-    height:210px;
+    display:none;
   }
 
   .poster-lines {

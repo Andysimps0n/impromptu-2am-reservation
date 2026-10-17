@@ -4,6 +4,7 @@ const APP_JS = __APP_JS__;
 const SITE_CSS = __SITE_CSS__;
 const LOGO_PNG = __LOGO_PNG__;
 const HERO_LOGO_PNG = __HERO_LOGO_PNG__;
+const INSTRUMENTS_PNG = __INSTRUMENTS_PNG__;
 const PRICE = 6500;
 const HOLD_MS = 30 * 60 * 1000;
 const BOOKING_RETENTION_MS = 90 * 24 * 60 * 60 * 1000;
@@ -261,6 +262,10 @@ export default {
       }
       if (request.method === 'GET' && decodeURIComponent(url.pathname) === '/즉새두로고1.png') {
         const bytes = Uint8Array.from(atob(HERO_LOGO_PNG), char => char.charCodeAt(0));
+        return new Response(bytes, { headers: { ...SECURITY_HEADERS, 'content-type': 'image/png', 'cache-control': 'no-store' } });
+      }
+      if (request.method === 'GET' && url.pathname === '/poster-instruments.png') {
+        const bytes = Uint8Array.from(atob(INSTRUMENTS_PNG), char => char.charCodeAt(0));
         return new Response(bytes, { headers: { ...SECURITY_HEADERS, 'content-type': 'image/png', 'cache-control': 'no-store' } });
       }
       if (request.method === 'GET' && url.pathname === '/api/event') {

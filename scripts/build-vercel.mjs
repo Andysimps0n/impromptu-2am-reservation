@@ -22,4 +22,5 @@ await writeFile(resolve(output, 'app.js'), app);
 await writeFile(resolve(output, 'styles.css'), styles);
 await copyFile(resolve(root, logoName), resolve(output, logoName));
 await copyFile(resolve(root, heroLogoName), resolve(output, heroLogoName));
+await copyFile(resolve(root, 'poster-instruments.png'), resolve(output, 'poster-instruments.png'));
 console.log(`Built ${output}`);

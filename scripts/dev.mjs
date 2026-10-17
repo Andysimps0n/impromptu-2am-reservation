@@ -16,13 +16,14 @@ const fallbackLogo = Buffer.from(
 const files = await readdir(root);
 const logoName = files.find(name => name.normalize('NFC').includes('로고2.png'));
 const heroLogoName = files.find(name => name.normalize('NFC').includes('로고1.png'));
-const [template, sourceHtml, privacyHtml, styles, logo, heroLogo] = await Promise.all([
+const [template, sourceHtml, privacyHtml, styles, logo, heroLogo, instruments] = await Promise.all([
   readFile(resolve(root, 'worker/index.js'), 'utf8'),
   readFile(resolve(root, 'index.html'), 'utf8'),
   readFile(resolve(root, 'privacy.html'), 'utf8'),
   readFile(resolve(root, 'styles.css'), 'utf8'),
   logoName ? readFile(resolve(root, logoName)) : Promise.resolve(fallbackLogo),
   heroLogoName ? readFile(resolve(root, heroLogoName)) : Promise.resolve(fallbackLogo),
+  readFile(resolve(root, 'poster-instruments.png')),
 ]);
 const clientBundle = await build({ entryPoints: [resolve(root, 'app.js')], bundle: true, format: 'iife', platform: 'browser', target: 'es2020', minify: true, write: false });
 const client = clientBundle.outputFiles[0].text;
@@ -33,7 +34,8 @@ const output = template
   .replace('__APP_JS__', () => JSON.stringify(client))
   .replace('__SITE_CSS__', () => JSON.stringify(styles))
   .replace('__LOGO_PNG__', () => JSON.stringify(logo.toString('base64')))
-  .replace('__HERO_LOGO_PNG__', () => JSON.stringify(heroLogo.toString('base64')));
+  .replace('__HERO_LOGO_PNG__', () => JSON.stringify(heroLogo.toString('base64')))
+  .replace('__INSTRUMENTS_PNG__', () => JSON.stringify(instruments.toString('base64')));
 const target = resolve(root, 'dist/server/index.js');
 await mkdir(dirname(target), { recursive: true });
 await writeFile(target, output);
