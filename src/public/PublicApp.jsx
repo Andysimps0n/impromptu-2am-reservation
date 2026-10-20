@@ -474,7 +474,9 @@ function BookingDialog({ session, seats, price, onClose, onSubmit }) {
   const [privacy, setPrivacy] = useState(false);
   const [busy, setBusy] = useState(false);
   const [serverError, setServerError] = useState('');
+  const [copyNotice, setCopyNotice] = useState(null);
   const payerInput = useRef(null);
+  const copyTimer = useRef(null);
   const amount = seats.length * price;
   const validate = (field, value) => {
     const text = value.trim();
@@ -498,8 +500,16 @@ function BookingDialog({ session, seats, price, onClose, onSubmit }) {
     }
     requestAnimationFrame(() => payerInput.current?.focus());
   };
+  useEffect(() => () => clearTimeout(copyTimer.current), []);
   const copyAccount = async () => {
-    try { await navigator.clipboard.writeText('3333376900284'); } catch { /* ignore */ }
+    try {
+      await navigator.clipboard.writeText('3333376900284');
+      setCopyNotice({ ok: true, message: '계좌번호를 복사했어요' });
+    } catch {
+      setCopyNotice({ ok: false, message: '복사하지 못했어요. 계좌번호를 길게 눌러 선택해 주세요.' });
+    }
+    clearTimeout(copyTimer.current);
+    copyTimer.current = setTimeout(() => setCopyNotice(null), 2000);
   };
   const submit = async event => {
     event.preventDefault();
@@ -585,6 +595,12 @@ function BookingDialog({ session, seats, price, onClose, onSubmit }) {
         {serverError && <div className="form-error-summary" role="alert">{serverError}</div>}
         <button className="primary" disabled={busy}>{busy ? '예약 처리 중…' : '입금 대기 예약하기'}</button>
       </form>
+      {copyNotice && (
+        <p className={`copy-toast ${copyNotice.ok ? '' : 'is-error'}`} role="status">
+          <span className="copy-toast-mark" aria-hidden="true">{copyNotice.ok ? '✓' : '!'}</span>
+          {copyNotice.message}
+        </p>
+      )}
     </Dialog>
   );
 }

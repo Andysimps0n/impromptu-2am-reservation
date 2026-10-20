@@ -39,7 +39,7 @@ async function bundleSite() {
     .replace('__HERO_LOGO_PNG__', () => JSON.stringify(heroLogo.toString('base64')))
     .replace('__INSTRUMENTS_PNG__', () => JSON.stringify(instruments.toString('base64')));
   await mkdir(dirname(target), { recursive: true });
-  const temporary = `${target}.tmp`;
+  const temporary = `${target}.${process.pid}.${Date.now()}.tmp`;
   await writeFile(temporary, output);
   await rename(temporary, target);
 }
