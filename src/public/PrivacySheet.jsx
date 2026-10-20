@@ -21,7 +21,6 @@ export function PrivacySheet({ onClose }) {
     <div className="sheet-backdrop" onMouseDown={event => event.target === event.currentTarget && onClose()}>
       <section className="privacy-sheet" role="dialog" aria-modal="true" aria-labelledby="privacy-sheet-title">
         <header className="privacy-sheet-top">
-          <span className="sheet-handle" aria-hidden="true" />
           <button className="close" type="button" aria-label="닫기" ref={closeButton} onClick={onClose}>×</button>
         </header>
         <article className="privacy-sheet-body">

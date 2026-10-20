@@ -469,10 +469,13 @@ function Dialog({ children, onClose, className = '' }) {
 
 function BookingDialog({ session, seats, price, onClose, onSubmit }) {
   const [values, setValues] = useState({ name: '', phone: '', payer: '' });
+  const [payerSame, setPayerSame] = useState(true);
   const [errors, setErrors] = useState({});
   const [privacy, setPrivacy] = useState(false);
   const [busy, setBusy] = useState(false);
   const [serverError, setServerError] = useState('');
+  const payerInput = useRef(null);
+  const amount = seats.length * price;
   const validate = (field, value) => {
     const text = value.trim();
     if (field === 'name' && !text) return '예매자 이름을 입력해주세요.';
@@ -487,52 +490,100 @@ function BookingDialog({ session, seats, price, onClose, onSubmit }) {
     setValues(current => ({ ...current, [field]: value }));
     if (errors[field]) setErrors(current => ({ ...current, [field]: validate(field, value) }));
   };
+  const changePayerSame = checked => {
+    setPayerSame(checked);
+    if (checked) {
+      setErrors(current => ({ ...current, payer: '' }));
+      return;
+    }
+    requestAnimationFrame(() => payerInput.current?.focus());
+  };
   const copyAccount = async () => {
     try { await navigator.clipboard.writeText('3333376900284'); } catch { /* ignore */ }
   };
   const submit = async event => {
     event.preventDefault();
-    const next = Object.fromEntries(Object.entries(values).map(([field, value]) => [field, validate(field, value)]));
+    const next = {
+      name: validate('name', values.name),
+      phone: validate('phone', values.phone),
+      payer: payerSame ? '' : validate('payer', values.payer),
+    };
     setErrors(next);
     if (Object.values(next).some(Boolean)) return;
     if (!privacy) { setServerError('개인정보 수집에 동의해주세요.'); return; }
     setBusy(true);
     setServerError('');
-    try { await onSubmit(values); } catch (problem) { setServerError(problem.message); setBusy(false); }
+    try {
+      await onSubmit({
+        name: values.name.trim(),
+        phone: values.phone.trim(),
+        payer: (payerSame ? values.name : values.payer).trim(),
+      });
+    } catch (problem) {
+      setServerError(problem.message);
+      setBusy(false);
+    }
   };
   return (
-    <Dialog onClose={onClose}>
+    <Dialog onClose={onClose} className="booking-dialog">
       <h2>좌석 예매하기</h2>
-      <p className="sub">{session?.dateLabel} {session?.timeLabel}<br />{seats.map(seat => `${seat}번`).join(', ')}</p>
-      <div className="bank-box">
-        {seats.length}석 · {(seats.length * price).toLocaleString()}원<br />
-        <span className="account-line">카카오뱅크 3333376900284
-          <button className="account-icon" type="button" aria-label="계좌번호 복사" onClick={copyAccount}>
-            <svg viewBox="0 0 24 24" aria-hidden="true">
-              <rect x="8" y="8" width="12" height="13" rx="2" fill="none" stroke="currentColor" strokeWidth="1.8"/>
-              <path d="M16 8V6a2 2 0 0 0-2-2H6a2 2 0 0 0-2 2v11a2 2 0 0 0 2 2h2" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round"/>
-            </svg>
-          </button>
-        </span><br />
-        입금 기한: 예약 후 30분 이내
-      </div>
+      <p className="booking-show">
+        <span>{session?.dateLabel} {session?.timeLabel}</span>
+        <strong>{seats.map(seat => `${seat}번`).join(', ')}</strong>
+      </p>
+      <section className="booking-pay" aria-label="입금 정보">
+        <p className="pay-kicker">입금액</p>
+        <p className="pay-amount">{amount.toLocaleString()}원</p>
+        <p className="pay-meta">{seats.length}석 · 예약 후 30분 이내</p>
+        <div className="pay-account">
+          <p className="pay-kicker">입금 계좌</p>
+          <div className="account-line">
+            <span>
+              <span className="account-bank">카카오뱅크</span>
+              <span className="account-number">3333376900284</span>
+            </span>
+            <button className="account-icon" type="button" aria-label="계좌번호 복사" onClick={copyAccount}>
+              <svg viewBox="0 0 24 24" aria-hidden="true">
+                <rect x="8" y="8" width="12" height="13" rx="2" fill="none" stroke="currentColor" strokeWidth="1.8"/>
+                <path d="M16 8V6a2 2 0 0 0-2-2H6a2 2 0 0 0-2 2v11a2 2 0 0 0 2 2h2" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round"/>
+              </svg>
+            </button>
+          </div>
+        </div>
+      </section>
       <form className="booking-form" noValidate onSubmit={submit}>
         <div className="form-grid">
-          {[['name', '예매자 이름', '예: 홍길동'], ['phone', '연락처', '예: 010-1234-5678'], ['payer', '입금자명', '예: 홍길동']].map(([key, label, placeholder]) => (
-            <div className="field" key={key}>
-              <label htmlFor={`book-${key}`}>{label}</label>
-              <input id={`book-${key}`} name={key} autoComplete={key === 'phone' ? 'tel' : 'name'} type={key === 'phone' ? 'tel' : 'text'} inputMode={key === 'phone' ? 'tel' : undefined} maxLength={key === 'phone' ? 20 : 40} placeholder={placeholder} value={values[key]} aria-invalid={Boolean(errors[key])} onChange={e => change(key, e.target.value)} onBlur={e => setErrors(current => ({ ...current, [key]: validate(key, e.target.value) }))} />
-              {errors[key] && <small className="field-error" aria-live="polite">{errors[key]}</small>}
+          <div className="field">
+            <label htmlFor="book-name">예매자 이름</label>
+            <input id="book-name" name="name" autoComplete="name" maxLength={40} placeholder="예: 홍길동" value={values.name} aria-invalid={Boolean(errors.name)} onChange={e => change('name', e.target.value)} onBlur={e => setErrors(current => ({ ...current, name: validate('name', e.target.value) }))} />
+            {errors.name && <small className="field-error" aria-live="polite">{errors.name}</small>}
+          </div>
+          <div className="field">
+            <label htmlFor="book-phone">연락처</label>
+            <input id="book-phone" name="phone" autoComplete="tel" type="tel" inputMode="tel" maxLength={20} placeholder="예: 010-1234-5678" value={values.phone} aria-invalid={Boolean(errors.phone)} onChange={e => change('phone', e.target.value)} onBlur={e => setErrors(current => ({ ...current, phone: validate('phone', e.target.value) }))} />
+            {errors.phone && <small className="field-error" aria-live="polite">{errors.phone}</small>}
+          </div>
+          <label className="same-payer">
+            <input type="checkbox" checked={payerSame} onChange={event => changePayerSame(event.target.checked)} />
+            예매자와 입금자가 같음
+          </label>
+          {!payerSame && (
+            <div className="field">
+              <label htmlFor="book-payer">입금자명</label>
+              <input ref={payerInput} id="book-payer" name="payer" autoComplete="name" maxLength={40} placeholder="실제 입금할 이름" value={values.payer} aria-invalid={Boolean(errors.payer)} onChange={e => change('payer', e.target.value)} onBlur={e => setErrors(current => ({ ...current, payer: validate('payer', e.target.value) }))} />
+              {errors.payer && <small className="field-error" aria-live="polite">{errors.payer}</small>}
             </div>
-          ))}
+          )}
+        </div>
+        <div className="booking-consent">
+          <label className="privacy-agree">
+            <input type="checkbox" checked={privacy} onChange={event => setPrivacy(event.target.checked)} />
+            개인정보 수집에 동의합니다.
+          </label>
+          <p className="privacy-reason">이름과 연락처는 예약을 찾고 티켓 안내 문자를 보내는 데 씁니다. 입금자명은 입금한 분과 예약을 맞추기 위해 받습니다.</p>
         </div>
         {serverError && <div className="form-error-summary" role="alert">{serverError}</div>}
         <button className="primary" disabled={busy}>{busy ? '예약 처리 중…' : '입금 대기 예약하기'}</button>
-        <label className="privacy-agree">
-          <input type="checkbox" checked={privacy} onChange={event => setPrivacy(event.target.checked)} />
-          개인정보 수집에 동의합니다.
-        </label>
-        <p className="privacy-reason">이름과 연락처는 예약을 찾고 티켓 안내 문자를 보내는 데 씁니다. 입금자명은 입금한 분과 예약을 맞추기 위해 받습니다.</p>
       </form>
     </Dialog>
   );

@@ -847,6 +847,150 @@ button {
   margin-top:2px;
 }
 
+.modal.booking-dialog h2 {
+  margin:0 0 8px;
+  padding-right:28px;
+}
+
+.booking-dialog .field label {
+  color:var(--muted);
+}
+
+.booking-show {
+  display:grid;
+  gap:2px;
+  margin:0 0 16px;
+  color:var(--muted);
+  font-size:16px;
+  line-height:1.45;
+}
+
+.booking-show strong {
+  color:var(--ink);
+  font-weight:700;
+}
+
+.booking-pay {
+  margin:0 0 20px;
+  padding:16px 18px 14px;
+  border:1px solid var(--line);
+  border-top:4px solid var(--brand);
+  border-radius:16px;
+  background:#fff;
+  color:var(--ink);
+}
+
+.pay-kicker {
+  margin:0;
+  color:var(--muted);
+  font-size:12px;
+  font-weight:700;
+}
+
+.pay-amount {
+  margin:2px 0 4px;
+  color:var(--brand-ink);
+  font-size:32px;
+  font-weight:800;
+  letter-spacing:-.04em;
+  line-height:1.15;
+  font-variant-numeric:tabular-nums;
+}
+
+.pay-meta {
+  margin:0;
+  color:var(--muted);
+  font-size:12px;
+  line-height:1.5;
+}
+
+.pay-account {
+  margin-top:14px;
+  padding-top:12px;
+  border-top:1px solid var(--line);
+}
+
+.booking-pay .account-line {
+  display:flex;
+  align-items:center;
+  justify-content:space-between;
+  gap:12px;
+  margin-top:4px;
+}
+
+.booking-pay .account-bank {
+  display:block;
+  color:var(--muted);
+  font-size:12px;
+  font-weight:700;
+}
+
+.booking-pay .account-number {
+  display:block;
+  margin-top:2px;
+  color:var(--ink);
+  font-size:20px;
+  font-weight:800;
+  letter-spacing:.04em;
+  line-height:1.2;
+  font-variant-numeric:tabular-nums;
+}
+
+.booking-pay .account-icon {
+  width:36px;
+  height:36px;
+  flex:none;
+  border-radius:10px;
+  background:var(--paper);
+}
+
+.booking-pay .account-icon svg {
+  width:18px;
+  height:18px;
+}
+
+.booking-form .form-grid {
+  gap:14px;
+}
+
+.same-payer,
+.booking-dialog .privacy-agree {
+  display:flex;
+  align-items:flex-start;
+  gap:10px;
+  color:var(--ink);
+  font-size:16px;
+  font-weight:700;
+  line-height:1.4;
+}
+
+.same-payer input,
+.booking-dialog .privacy-agree input {
+  width:18px;
+  height:18px;
+  flex:none;
+  margin:2px 0 0;
+  accent-color:var(--brand-ink);
+}
+
+.booking-consent {
+  margin-top:18px;
+  padding-top:16px;
+  border-top:1px solid var(--line);
+}
+
+.booking-dialog .privacy-agree {
+  margin-top:0;
+}
+
+.booking-dialog .privacy-reason {
+  margin:6px 0 0 28px;
+}
+
+.booking-dialog .primary {
+  margin-top:16px;
+}
+
 .privacy-agree {
   display:flex;
   align-items:center;
@@ -1103,43 +1247,33 @@ button {
   width:min(760px, 100%);
   max-height:min(86dvh, 860px);
   overflow:auto;
-  padding:10px 28px 36px;
+  padding:0 28px 36px;
   border-radius:22px 22px 0 0;
   background:var(--cream);
   box-shadow:0 -18px 60px #10171040;
   animation:sheet-rise .22s ease-out;
 }
 
-.sheet-handle {
-  width:42px;
-  height:4px;
-  border-radius:999px;
-  background:#d8d3c7;
-}
-
 .privacy-sheet-top {
   position:sticky;
   top:0;
   z-index:1;
-  display:grid;
-  grid-template-columns:1fr auto 1fr;
-  align-items:center;
-  margin:0 -28px 8px;
-  padding:8px 12px 6px;
+  display:flex;
+  justify-content:flex-end;
+  margin:0 -28px 0;
+  padding:10px 12px 14px;
   background:var(--cream);
-}
-
-.privacy-sheet-top .sheet-handle {
-  grid-column:2;
 }
 
 .privacy-sheet-top .close {
   position:static;
-  grid-column:3;
-  justify-self:end;
   width:36px;
   height:36px;
   line-height:1;
+}
+
+.privacy-sheet-body > :first-child {
+  margin-top:0;
 }
 
 .privacy-sheet-body h2 {
@@ -1442,10 +1576,11 @@ button {
     flex-wrap:wrap;
   }
   .privacy-sheet {
-    padding:8px 18px 28px;
+    padding:0 18px 28px;
   }
   .privacy-sheet-top {
-    margin:0 -18px 8px;
+    margin:0 -18px 0;
+    padding:8px 12px 14px;
   }
   .privacy-sheet-body h2 {
     font-size:24px;
