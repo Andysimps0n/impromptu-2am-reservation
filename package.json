@@ -5,6 +5,7 @@
   "type": "module",
   "scripts": {
     "dev": "node scripts/dev.mjs",
+    "test": "vitest run",
     "build": "node scripts/build-site.mjs",
     "build:vercel": "node scripts/build-vercel.mjs",
     "build:cloudflare": "node scripts/build-site.mjs",
@@ -14,7 +15,9 @@
     "set:cloudflare-sms-secrets": "node scripts/cloudflare.mjs set-sms-secrets"
   },
   "devDependencies": {
+    "@cloudflare/vitest-plugin": "^1.4.6",
     "esbuild": "^0.28.2",
+    "vitest": "^5.0.5",
     "wrangler": "^4.151.0"
   },
   "dependencies": {

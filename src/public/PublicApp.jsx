@@ -530,8 +530,9 @@ function BookingDialog({ session, seats, price, onClose, onSubmit }) {
         <button className="primary" disabled={busy}>{busy ? '예약 처리 중…' : '입금 대기 예약하기'}</button>
         <label className="privacy-agree">
           <input type="checkbox" checked={privacy} onChange={event => setPrivacy(event.target.checked)} />
-          개인정보 수집에 동의합니다. <a href="/privacy" target="_blank" rel="noopener">개인정보 수집 안내</a>
+          개인정보 수집에 동의합니다.
         </label>
+        <p className="privacy-reason">이름과 연락처는 예약을 찾고 티켓 안내 문자를 보내는 데 씁니다. 입금자명은 입금한 분과 예약을 맞추기 위해 받습니다.</p>
       </form>
     </Dialog>
   );

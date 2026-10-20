@@ -1,0 +1,28 @@
+{
+  "$schema": "../node_modules/wrangler/config-schema.json",
+  "name": "impromptu-2am-ticketing-test",
+  "main": "../worker/index.js",
+  "compatibility_date": "2026-10-15",
+  "workers_dev": false,
+  "define": {
+    "__INDEX_HTML__": "\"\"",
+    "__PRIVACY_HTML__": "\"\"",
+    "__APP_JS__": "\"\"",
+    "__SITE_CSS__": "\"\"",
+    "__LOGO_PNG__": "\"\"",
+    "__HERO_LOGO_PNG__": "\"\"",
+    "__INSTRUMENTS_PNG__": "\"\""
+  },
+  "vars": {
+    "ADMIN_USERNAME": "test-admin",
+    "ADMIN_PASSWORD": "test-admin-password"
+  },
+  "d1_databases": [
+    {
+      "binding": "DB",
+      "database_name": "impromptu-2am-ticketing-test",
+      "database_id": "00000000-0000-0000-0000-000000000000",
+      "migrations_dir": "../drizzle"
+    }
+  ]
+}
