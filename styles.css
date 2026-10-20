@@ -847,148 +847,281 @@ button {
   margin-top:2px;
 }
 
-.modal.booking-dialog h2 {
-  margin:0 0 8px;
-  padding-right:28px;
+.modal-backdrop:has(.booking-dialog) {
+  background:oklch(0 0 0 / 0.56);
+  padding:24px;
 }
 
-.booking-dialog .field label {
-  color:var(--muted);
+.modal.booking-dialog {
+  background:#fff;
+  border-radius:20px;
+  padding:16px;
+  box-shadow:0 12px 32px oklch(0.155 0.060 261 / 0.10),0 2px 6px oklch(0.155 0.060 261 / 0.06);
+  color:#191f28;
+}
+
+.booking-dialog .close {
+  top:12px;
+  right:12px;
+  width:40px;
+  height:40px;
+  color:#6b7684;
+  font-size:22px;
+  line-height:1;
+}
+
+.modal.booking-dialog h2 {
+  margin:0 0 8px;
+  padding-right:32px;
+  color:#191f28;
+  font-size:24px;
+  font-weight:700;
+  line-height:1.3;
+  letter-spacing:-.02em;
 }
 
 .booking-show {
   display:grid;
-  gap:2px;
-  margin:0 0 16px;
-  color:var(--muted);
-  font-size:16px;
-  line-height:1.45;
+  gap:4px;
+  margin:0 0 24px;
+  color:#4e5968;
+  font-size:15px;
+  font-weight:400;
+  line-height:1.5;
+  letter-spacing:-.005em;
 }
 
 .booking-show strong {
-  color:var(--ink);
-  font-weight:700;
+  color:#191f28;
+  font-size:17px;
+  font-weight:600;
+  letter-spacing:-.01em;
 }
 
 .booking-pay {
-  margin:0 0 20px;
-  padding:16px 18px 14px;
-  border:1px solid var(--line);
-  border-top:4px solid var(--brand);
+  margin:0 0 24px;
+  padding:16px;
   border-radius:16px;
-  background:#fff;
-  color:var(--ink);
+  background:#f2f4f6;
+  color:#191f28;
 }
 
 .pay-kicker {
   margin:0;
-  color:var(--muted);
-  font-size:12px;
-  font-weight:700;
+  color:#6b7684;
+  font-size:13px;
+  font-weight:600;
+  line-height:1.25;
 }
 
 .pay-amount {
-  margin:2px 0 4px;
-  color:var(--brand-ink);
-  font-size:32px;
-  font-weight:800;
-  letter-spacing:-.04em;
-  line-height:1.15;
+  margin:4px 0;
+  color:#191f28;
+  font-size: 35px;
+  font-weight: 600;
+  letter-spacing:-.02em;
+  line-height:1.2;
   font-variant-numeric:tabular-nums;
 }
 
 .pay-meta {
   margin:0;
-  color:var(--muted);
-  font-size:12px;
+  color:#6b7684;
+  font-size:13px;
+  font-weight:400;
   line-height:1.5;
 }
 
 .pay-account {
-  margin-top:14px;
-  padding-top:12px;
-  border-top:1px solid var(--line);
+  margin-top:16px;
+  border-top:1px solid #e5e8eb;
 }
 
 .booking-pay .account-line {
   display:flex;
   align-items:center;
   justify-content:space-between;
-  gap:12px;
-  margin-top:4px;
+  gap:8px;
+  margin-top:8px;
 }
 
 .booking-pay .account-bank {
   display:block;
-  color:var(--muted);
+  color:#6b7684;
   font-size:12px;
-  font-weight:700;
+  font-weight:500;
+  line-height:1.4;
 }
 
 .booking-pay .account-number {
   display:block;
-  margin-top:2px;
-  color:var(--ink);
+  margin-top:4px;
+  color:#191f28;
   font-size:20px;
-  font-weight:800;
-  letter-spacing:.04em;
-  line-height:1.2;
+  font-weight: 600;
+  letter-spacing:-.015em;
+  line-height:1.35;
   font-variant-numeric:tabular-nums;
 }
 
 .booking-pay .account-icon {
-  width:36px;
-  height:36px;
+  width:40px;
+  height:40px;
   flex:none;
-  border-radius:10px;
-  background:var(--paper);
+  border-radius:12px;
+  background:#fff;
+  color:#4e5968;
 }
 
 .booking-pay .account-icon svg {
-  width:18px;
-  height:18px;
+  width:20px;
+  height:20px;
 }
 
-.booking-form .form-grid {
-  gap:14px;
+.booking-dialog .form-grid {
+  gap:16px;
+}
+
+.booking-dialog .field label {
+  margin-bottom:2px;
+  color:#4e5968;
+  font-size:13px;
+  font-weight:600;
+  line-height:1.25;
+}
+
+.booking-dialog .field input {
+  height:48px;
+  padding:0 16px;
+  border:1px solid #e5e8eb;
+  border-radius:12px;
+  background:#f2f4f6;
+  color:#191f28;
+  font-size:14px;
+  font-weight:400;
+  letter-spacing:-.005em;
+  line-height:1.5;
+}
+
+.booking-dialog .field input::placeholder {
+  color:#b0b8c1;
+}
+
+.booking-dialog .field input:focus {
+  border:1.5px solid var(--brand-ink);
+  background:#fff;
+  box-shadow:none;
+}
+
+.booking-dialog .field input[aria-invalid="true"] {
+  border:1.5px solid #f04452;
+  background:#fff;
+  box-shadow:none;
+}
+
+.booking-dialog .field-error {
+  margin-top:4px;
+  color:#f04452;
+  font-size:13px;
+  font-weight:400;
+  line-height:1.5;
+}
+
+.booking-dialog .form-error-summary {
+  margin-top:16px;
+  border:1px solid #f04452;
+  border-radius:12px;
+  color:#f04452;
+  font-size:13px;
+  font-weight:600;
 }
 
 .same-payer,
 .booking-dialog .privacy-agree {
   display:flex;
-  align-items:flex-start;
-  gap:10px;
-  color:var(--ink);
-  font-size:16px;
-  font-weight:700;
-  line-height:1.4;
+  align-items:center;
+  gap:8px;
+  margin:0;
+  color:#191f28;
+  font-size:12px;
+  font-weight:600;
+  line-height:1.25;
+  letter-spacing:-.005em;
 }
 
 .same-payer input,
 .booking-dialog .privacy-agree input {
-  width:18px;
-  height:18px;
+  appearance:none;
+  width:22px;
+  height:22px;
   flex:none;
-  margin:2px 0 0;
-  accent-color:var(--brand-ink);
+  margin:0;
+  border:1.5px solid #b0b8c1;
+  border-radius:6px;
+  background:#fff;
+  display:grid;
+  place-content:center;
+}
+
+.same-payer input:checked,
+.booking-dialog .privacy-agree input:checked {
+  border-color:var(--brand);
+  background:var(--brand);
+}
+
+.same-payer input:checked::before,
+.booking-dialog .privacy-agree input:checked::before {
+  content:"";
+  width:5px;
+  height:9px;
+  border:solid var(--brand-ink);
+  border-width:0 2px 2px 0;
+  transform:translateY(-1px) rotate(45deg);
+}
+
+.same-payer input:focus-visible,
+.booking-dialog .privacy-agree input:focus-visible {
+  outline:2px solid var(--brand-ink);
+  outline-offset:2px;
 }
 
 .booking-consent {
-  margin-top:18px;
-  padding-top:16px;
-  border-top:1px solid var(--line);
-}
-
-.booking-dialog .privacy-agree {
-  margin-top:0;
+  margin-top:14px;
 }
 
 .booking-dialog .privacy-reason {
-  margin:6px 0 0 28px;
+  margin:4px 0 0 30px;
+  color:#6b7684;
+  font-size:12px;
+  font-weight:500;
+  line-height:1.4;
 }
 
 .booking-dialog .primary {
+  height:56px;
   margin-top:16px;
+  padding:0 16px;
+  border-radius:16px;
+  background:var(--brand);
+  color:var(--brand-ink);
+  font-size:17px;
+  font-weight:700;
+  line-height:1.25;
+  letter-spacing:-.005em;
+}
+
+.booking-dialog .primary:hover {
+  background:var(--brand);
+  transform:none;
+}
+
+.booking-dialog .primary:active:not(:disabled) {
+  background:color-mix(in srgb,var(--brand) 74%,#000);
+}
+
+.booking-dialog .primary:disabled {
+  background:var(--brand);
+  opacity:.3;
 }
 
 .privacy-agree {
@@ -1552,6 +1685,9 @@ button {
     max-height:calc(100dvh - 24px);
     padding:22px 18px 18px;
     border-radius:20px;
+  }
+  .modal.booking-dialog {
+    padding:16px;
   }
   .order {
     grid-template-columns:1fr 1fr;

@@ -534,9 +534,9 @@ function BookingDialog({ session, seats, price, onClose, onSubmit }) {
       <section className="booking-pay" aria-label="입금 정보">
         <p className="pay-kicker">입금액</p>
         <p className="pay-amount">{amount.toLocaleString()}원</p>
-        <p className="pay-meta">{seats.length}석 · 예약 후 30분 이내</p>
-        <div className="pay-account">
-          <p className="pay-kicker">입금 계좌</p>
+        <p className="pay-meta">{seats.length}석 · 예약 후 30분 이내 확인 예정</p>
+        <div className="pay-account"> 
+          {/* <p className="pay-kicker">입금 계좌</p> */}
           <div className="account-line">
             <span>
               <span className="account-bank">카카오뱅크</span>
@@ -570,7 +570,7 @@ function BookingDialog({ session, seats, price, onClose, onSubmit }) {
           {!payerSame && (
             <div className="field">
               <label htmlFor="book-payer">입금자명</label>
-              <input ref={payerInput} id="book-payer" name="payer" autoComplete="name" maxLength={40} placeholder="실제 입금할 이름" value={values.payer} aria-invalid={Boolean(errors.payer)} onChange={e => change('payer', e.target.value)} onBlur={e => setErrors(current => ({ ...current, payer: validate('payer', e.target.value) }))} />
+              <input ref={payerInput} id="book-payer" name="payer" autoComplete="name" maxLength={40} placeholder="예: 홍길동" value={values.payer} aria-invalid={Boolean(errors.payer)} onChange={e => change('payer', e.target.value)} onBlur={e => setErrors(current => ({ ...current, payer: validate('payer', e.target.value) }))} />
               {errors.payer && <small className="field-error" aria-live="polite">{errors.payer}</small>}
             </div>
           )}
