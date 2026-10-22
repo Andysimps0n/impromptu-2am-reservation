@@ -22,9 +22,16 @@ const json = (data, status = 200, headers = {}) => new Response(JSON.stringify(d
   status,
   headers: { ...SECURITY_HEADERS, 'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-store', ...headers },
 });
-const cookieToken = request => /(?:^|; )stage_admin=([^;]+)/.exec(request.headers.get('cookie') || '')?.[1] || '';
+const readCookie = (request, name) => new RegExp(`(?:^|; )${name}=([^;]*)`).exec(request.headers.get('cookie') || '')?.[1] || '';
+const cookieToken = request => readCookie(request, 'stage_admin');
 const normalizePhone = value => String(value || '').replace(/\D/g, '');
 const maskPhone = phone => phone.replace(/^(\d{3})\d+(\d{4})$/, '$1-****-$2');
+const formatPhone = phone => {
+  const digits = String(phone || '').replace(/\D/g, '');
+  if (digits.length === 11) return `${digits.slice(0, 3)}-${digits.slice(3, 7)}-${digits.slice(7)}`;
+  if (digits.length === 10) return `${digits.slice(0, 3)}-${digits.slice(3, 6)}-${digits.slice(6)}`;
+  return digits || String(phone || '');
+};
 const safeEqual = (a, b) => {
   let diff = a.length ^ b.length;
   for (let i = 0; i < Math.max(a.length, b.length); i += 1) diff |= (a.charCodeAt(i) || 0) ^ (b.charCodeAt(i) || 0);
@@ -109,7 +116,7 @@ const adminBookingRows = async (db, rows, showId) => {
     ticketsByBooking.get(item.booking_id).push({ id: item.id, seat: item.seat, status: item.status, checkedInAt: item.checked_in_at });
   }
   return rows.map(row => ({
-    id: row.id, showId: row.show_id || '1', name: row.name, phone: maskPhone(row.phone), payer: row.payer,
+    id: row.id, showId: row.show_id || '1', name: row.name, phone: formatPhone(row.phone), payer: row.payer,
     eventTitle: session?.title || '', venue: session?.venue || '', showNumber: session?.sort_order || 1,
     dateLabel: session?.date_label || '', timeLabel: session?.time_label || '',
     seats: seatsByBooking.get(row.id) || [], tickets: row.status === 'paid' ? ticketsByBooking.get(row.id) || [] : [],
@@ -118,12 +125,125 @@ const adminBookingRows = async (db, rows, showId) => {
     notificationErrorCode: row.notification_error_code || '', notificationUpdatedAt: row.notification_updated_at || null,
   }));
 };
-const requireAdmin = async (request, env) => {
+const LOCAL_PASSWORD_USER = 'local-password-admin';
+const LOCAL_PASSWORD_KAKAO_ID = 'local:password';
+const SESSION_SECONDS = 8 * 60 * 60;
+
+const flagOn = value => value === '1' || value === 'true';
+const kakaoAdminIds = env => new Set(String(env.ADMIN_KAKAO_IDS || '').split(',').map(item => item.trim()).filter(item => /^\d+$/.test(item)));
+const sessionCookie = (token, maxAge = SESSION_SECONDS) => `stage_admin=${token}; HttpOnly; Secure; SameSite=Lax; Path=/; Max-Age=${maxAge}`;
+const clearSessionCookie = () => sessionCookie('', 0);
+const stateCookie = value => `kakao_oauth_state=${value}; HttpOnly; Secure; SameSite=Lax; Path=/; Max-Age=600`;
+const clearStateCookie = () => 'kakao_oauth_state=; HttpOnly; Secure; SameSite=Lax; Path=/; Max-Age=0';
+const authNext = value => (value === 'booking' ? 'booking' : 'admin');
+const wantsPage = request => (request.headers.get('accept') || '').includes('text/html');
+const cleanNickname = value => String(value || '').replace(/[\u0000-\u001f]/g, '').trim().slice(0, 40);
+
+const kakaoSettings = env => {
+  const restKey = String(env.KAKAO_REST_API_KEY || '').trim();
+  const redirectUri = String(env.KAKAO_REDIRECT_URI || '').trim();
+  const clientSecret = String(env.KAKAO_CLIENT_SECRET || '').trim();
+  const redirectOk = /^https:\/\/[^/\s]+\/auth\/kakao\/callback$/.test(redirectUri)
+    || /^http:\/\/(localhost|127\.0\.0\.1)(:\d+)?\/auth\/kakao\/callback$/.test(redirectUri);
+  return { restKey, redirectUri, clientSecret, ready: Boolean(restKey && redirectOk) };
+};
+
+const redirectTo = (location, cookies = []) => {
+  const headers = new Headers({ ...SECURITY_HEADERS, location, 'cache-control': 'no-store' });
+  for (const cookie of cookies) headers.append('set-cookie', cookie);
+  return new Response(null, { status: 302, headers });
+};
+
+const authErrorLocation = (next, code) => (
+  authNext(next) === 'booking' ? `/?booking=1&auth_error=${code}#booking-seats` : `/?admin=1&auth_error=${code}`
+);
+
+const kakaoFailure = (request, next, status, message, code) => (
+  wantsPage(request)
+    ? redirectTo(authErrorLocation(next, code), [clearStateCookie()])
+    : json({ error: message }, status, { 'set-cookie': clearStateCookie() })
+);
+
+// Kakao returns the member number as a JSON number. Parsing the whole body with
+// JSON.parse can round integers past 2^53, so the id is read from the raw text.
+const readKakaoMemberId = text => /"id"\s*:\s*(\d+)/.exec(String(text))?.[1] || '';
+
+const loadSession = async (request, env) => {
   const token = cookieToken(request);
-  if (!token) return false;
-  const hash = await tokenHash(token);
-  const session = await env.DB.prepare('SELECT expires_at FROM admin_sessions WHERE token_hash=?').bind(hash).first();
-  return Boolean(session && session.expires_at > Date.now());
+  if (!token) return null;
+  const row = await env.DB.prepare(`SELECT s.expires_at, s.user_id, u.kakao_id, u.nickname, u.role
+    FROM admin_sessions s LEFT JOIN users u ON u.id = s.user_id
+    WHERE s.token_hash = ?`).bind(await tokenHash(token)).first();
+  if (!row || row.expires_at <= Date.now()) return null;
+  return row;
+};
+
+const sessionIsAdmin = (session, env) => {
+  if (!session?.user_id || session.role !== 'admin') return false;
+  if (session.user_id === LOCAL_PASSWORD_USER) return flagOn(env.ADMIN_PASSWORD_LOGIN);
+  return kakaoAdminIds(env).has(String(session.kakao_id || ''));
+};
+
+const requireAdmin = async (request, env) => {
+  const session = await loadSession(request, env);
+  if (!session?.user_id) return json({ error: '운영진 로그인이 필요합니다.' }, 401);
+  if (!sessionIsAdmin(session, env)) return json({ error: '운영진 권한이 없습니다.' }, 403);
+  return null;
+};
+
+const startSession = async (db, userId) => {
+  const token = bytesToHex(crypto.getRandomValues(new Uint8Array(32)));
+  const expires = Date.now() + SESSION_SECONDS * 1000;
+  await db.prepare('INSERT INTO admin_sessions(token_hash, expires_at, user_id) VALUES(?,?,?)')
+    .bind(await tokenHash(token), expires, userId).run();
+  return token;
+};
+
+const ensurePasswordAdmin = db => db.prepare(`INSERT INTO users(id, kakao_id, nickname, role, created_at)
+  VALUES(?, ?, '', 'admin', ?)
+  ON CONFLICT(id) DO UPDATE SET role = 'admin'`).bind(LOCAL_PASSWORD_USER, LOCAL_PASSWORD_KAKAO_ID, Date.now()).run();
+
+const upsertKakaoUser = async (db, env, kakaoId, nickname) => {
+  const role = kakaoAdminIds(env).has(kakaoId) ? 'admin' : 'user';
+  await db.prepare(`INSERT INTO users(id, kakao_id, nickname, role, created_at)
+    VALUES(?, ?, ?, ?, ?)
+    ON CONFLICT(kakao_id) DO UPDATE SET nickname = excluded.nickname, role = excluded.role`)
+    .bind(crypto.randomUUID(), kakaoId, nickname, role, Date.now()).run();
+  return db.prepare('SELECT id, role, nickname FROM users WHERE kakao_id = ?').bind(kakaoId).first();
+};
+
+const exchangeKakaoCode = async (settings, code) => {
+  const body = new URLSearchParams({
+    grant_type: 'authorization_code',
+    client_id: settings.restKey,
+    redirect_uri: settings.redirectUri,
+    code,
+  });
+  if (settings.clientSecret) body.set('client_secret', settings.clientSecret);
+  const tokenResponse = await fetch('https://kauth.kakao.com/oauth/token', {
+    method: 'POST',
+    headers: { 'content-type': 'application/x-www-form-urlencoded' },
+    body,
+  });
+  if (!tokenResponse.ok) return null;
+  const tokenPayload = await tokenResponse.json().catch(() => null);
+  const accessToken = String(tokenPayload?.access_token || '');
+  if (!accessToken) return null;
+  const meResponse = await fetch('https://kapi.kakao.com/v2/user/me', {
+    headers: { authorization: `Bearer ${accessToken}` },
+  });
+  const meText = await meResponse.text();
+  if (!meResponse.ok) return null;
+  const kakaoId = readKakaoMemberId(meText);
+  if (!/^\d+$/.test(kakaoId)) return null;
+  let nickname = '';
+  try {
+    const profile = JSON.parse(meText);
+    nickname = cleanNickname(profile?.kakao_account?.profile?.nickname || profile?.properties?.nickname);
+  } catch {
+    nickname = '';
+  }
+  return { kakaoId, nickname };
 };
 const cleanExpired = async (db, showId) => {
   const cutoff = Date.now() - HOLD_MS;
@@ -134,6 +254,7 @@ const cleanExpired = async (db, showId) => {
       db.prepare('DELETE FROM seat_locks WHERE booking_id=?').bind(id),
       db.prepare('DELETE FROM performance_seat_locks WHERE booking_id=?').bind(id),
       db.prepare('DELETE FROM phone_seat_locks WHERE booking_id=?').bind(id),
+      db.prepare('DELETE FROM kakao_seat_locks WHERE booking_id=?').bind(id),
     ]);
     await db.batch(statements);
   }
@@ -151,6 +272,7 @@ const purgeOldBookings = async db => {
     db.prepare(`DELETE FROM seat_locks WHERE booking_id IN (${placeholders})`).bind(...ids),
     db.prepare(`DELETE FROM performance_seat_locks WHERE booking_id IN (${placeholders})`).bind(...ids),
     db.prepare(`DELETE FROM phone_seat_locks WHERE booking_id IN (${placeholders})`).bind(...ids),
+    db.prepare(`DELETE FROM kakao_seat_locks WHERE booking_id IN (${placeholders})`).bind(...ids),
     db.prepare(`DELETE FROM tickets WHERE booking_id IN (${placeholders})`).bind(...ids),
     db.prepare(`DELETE FROM booking_seats WHERE booking_id IN (${placeholders})`).bind(...ids),
     db.prepare(`DELETE FROM bookings WHERE id IN (${placeholders})`).bind(...ids),
@@ -303,24 +425,45 @@ export default {
         if (!name || name.length > 40) return json({ error: '예매자 이름을 입력해주세요. (최대 40자)' }, 400);
         if (!payer || payer.length > 40) return json({ error: '입금자명을 입력해주세요. 실제 송금하실 이름을 적어주세요. (최대 40자)' }, 400);
         if (phone.length < 10 || phone.length > 11) return json({ error: '연락처는 숫자 10~11자리로 입력해주세요. 예: 010-1234-5678' }, 400);
-        if (seats.length < 1 || seats.length > 2 || seats.some(seat => !ALL_SEATS.includes(seat))) return json({ error: '선택한 좌석 정보를 확인해주세요. 좌석은 한 번에 최대 2석까지 신청할 수 있습니다.' }, 400);
+        if (seats.length < 1 || seats.length > 4 || seats.some(seat => !ALL_SEATS.includes(seat))) return json({ error: '선택한 좌석 정보를 확인해주세요. 좌석은 한 번에 최대 4석까지 신청할 수 있습니다.' }, 400);
         if (seats.some(seat => RESERVED.has(seat))) return json({ error: 'A열은 운영진 보유석으로 예매할 수 없습니다.' }, 400);
+        let bookingUser = null;
+        if (flagOn(env.REQUIRE_KAKAO_BOOKING)) {
+          bookingUser = await loadSession(request, env);
+          if (!bookingUser?.kakao_id || bookingUser.kakao_id === LOCAL_PASSWORD_KAKAO_ID) return json({ error: '예매하려면 카카오 로그인이 필요합니다.' }, 401);
+          const heldByKakao = await db.prepare('SELECT COUNT(*) AS count FROM kakao_seat_locks WHERE show_id=? AND kakao_id=?').bind(showId, bookingUser.kakao_id).first();
+          if (heldByKakao.count + seats.length > 4) return json({ error: '카카오 계정 하나당 회차별 최대 4석까지 예매할 수 있습니다.' }, 429);
+        }
         const existing = await db.prepare('SELECT COUNT(*) AS count FROM phone_seat_locks WHERE show_id=? AND phone=?').bind(showId, phone).first();
-        if (existing.count + seats.length > 2) return json({ error: '연락처 하나당 최대 2석까지 예매할 수 있습니다.' }, 429);
+        if (existing.count + seats.length > 4) return json({ error: '연락처 하나당 최대 4석까지 예매할 수 있습니다.' }, 429);
         const id = `STG-${Array.from(crypto.getRandomValues(new Uint8Array(5)), b => b.toString(16).padStart(2, '0')).join('').toUpperCase()}`;
         const createdAt = Date.now();
-        const statements = [db.prepare(`INSERT INTO bookings(id,name,phone,payer,amount,status,created_at,show_id)
-          SELECT ?,?,?,?,?,'pending',?,? WHERE EXISTS (
+        const statements = [db.prepare(`INSERT INTO bookings(id,name,phone,payer,amount,status,created_at,show_id,user_id)
+          SELECT ?,?,?,?,?,'pending',?,?,? WHERE EXISTS (
             SELECT 1 FROM event_sessions s JOIN events e ON e.id=s.event_id
             WHERE s.id=? AND s.event_id=? AND s.status='scheduled' AND e.status='published' AND e.booking_open=1
-          )`).bind(id, name, phone, payer, seats.length * session.ticket_price, createdAt, showId, showId, session.event_id)];
+          )`).bind(id, name, phone, payer, seats.length * session.ticket_price, createdAt, showId, bookingUser?.id || null, showId, session.event_id)];
         for (const seat of seats) {
           statements.push(db.prepare('INSERT INTO booking_seats(seat,booking_id) SELECT ?,? WHERE EXISTS (SELECT 1 FROM bookings WHERE id=?)').bind(seat, id, id));
           statements.push(db.prepare('INSERT INTO performance_seat_locks(show_id,seat,booking_id) SELECT ?,?,? WHERE EXISTS (SELECT 1 FROM bookings WHERE id=?)').bind(showId, seat, id, id));
           statements.push(db.prepare(`INSERT INTO phone_seat_locks(show_id,phone,slot,booking_id,seat)
-            SELECT ?,?,CASE WHEN EXISTS (SELECT 1 FROM phone_seat_locks WHERE show_id=? AND phone=? AND slot=1) THEN 2 ELSE 1 END,?,?
+            SELECT ?,?,(
+              SELECT MIN(candidate) FROM (
+                SELECT 1 AS candidate UNION ALL SELECT 2 UNION ALL SELECT 3 UNION ALL SELECT 4
+              ) WHERE candidate NOT IN (SELECT slot FROM phone_seat_locks WHERE show_id=? AND phone=?)
+            ),?,?
             WHERE EXISTS (SELECT 1 FROM bookings WHERE id=?)`)
             .bind(showId, phone, showId, phone, id, seat, id));
+          if (bookingUser) {
+            statements.push(db.prepare(`INSERT INTO kakao_seat_locks(show_id,kakao_id,slot,booking_id,seat)
+              SELECT ?,?,(
+                SELECT MIN(candidate) FROM (
+                  SELECT 1 AS candidate UNION ALL SELECT 2 UNION ALL SELECT 3 UNION ALL SELECT 4
+                ) WHERE candidate NOT IN (SELECT slot FROM kakao_seat_locks WHERE show_id=? AND kakao_id=?)
+              ),?,?
+              WHERE EXISTS (SELECT 1 FROM bookings WHERE id=?)`)
+              .bind(showId, bookingUser.kakao_id, showId, bookingUser.kakao_id, id, seat, id));
+          }
         }
         try {
           const results = await db.batch(statements);
@@ -328,8 +471,9 @@ export default {
         }
         catch (error) {
           console.error('booking_write_failed', { message: String(error?.message || error).slice(0, 240) });
-          if (/CHECK constraint failed: slot/i.test(String(error?.message || error))) return json({ error: '연락처 하나당 회차별 최대 2석까지 예매할 수 있습니다.' }, 429);
-          if (/UNIQUE constraint failed: phone_seat_locks\./i.test(String(error?.message || error))) return json({ error: '연락처 하나당 회차별 최대 2석까지 예매할 수 있습니다.' }, 429);
+          if (/kakao_seat_locks/i.test(String(error?.message || error))) return json({ error: '카카오 계정 하나당 회차별 최대 4석까지 예매할 수 있습니다.' }, 429);
+          if (/CHECK constraint failed: slot/i.test(String(error?.message || error))) return json({ error: '연락처 하나당 회차별 최대 4석까지 예매할 수 있습니다.' }, 429);
+          if (/UNIQUE constraint failed: phone_seat_locks\./i.test(String(error?.message || error))) return json({ error: '연락처 하나당 회차별 최대 4석까지 예매할 수 있습니다.' }, 429);
           if (/unique constraint|primary key|constraint failed/i.test(String(error?.message || error))) return json({ error: '선택한 좌석 중 이미 예약된 좌석이 있습니다. 좌석을 다시 선택해주세요.' }, 409);
           return json({ error: '예약 저장 중 문제가 발생했습니다. 잠시 후 다시 시도해주세요.' }, 503);
         }
@@ -357,8 +501,82 @@ export default {
         return json({ showId: access.show_id || '1', eventTitle: session?.title || '', subtitle: session?.subtitle || '', venue: session?.venue || '',
           showNumber: session?.sort_order || 1, dateLabel: session?.date_label || '', timeLabel: session?.time_label || '', tickets });
       }
-      if (request.method === 'GET' && url.pathname === '/api/admin/session') return json({ authenticated: await requireAdmin(request, env) });
+      if (request.method === 'GET' && url.pathname === '/api/auth/session') {
+        const session = await loadSession(request, env);
+        const signedIn = Boolean(session?.kakao_id && session.kakao_id !== LOCAL_PASSWORD_KAKAO_ID);
+        return json({
+          kakaoConfigured: kakaoSettings(env).ready,
+          passwordLogin: flagOn(env.ADMIN_PASSWORD_LOGIN),
+          bookingRequiresKakao: flagOn(env.REQUIRE_KAKAO_BOOKING),
+          user: signedIn ? { nickname: session.nickname || '', role: session.role } : null,
+        });
+      }
+      if (request.method === 'GET' && url.pathname === '/auth/kakao/login') {
+        const next = authNext(url.searchParams.get('next'));
+        const settings = kakaoSettings(env);
+        if (!settings.ready) return kakaoFailure(request, next, 503, '카카오 로그인 키가 설정되지 않았습니다. KAKAO_REST_API_KEY와 KAKAO_REDIRECT_URI를 확인해주세요.', 'kakao_not_configured');
+        if (!await consumeRateLimit(db, request, 'kakao_login', 30, 10 * 60 * 1000)) return kakaoFailure(request, next, 429, '로그인 시도가 많습니다. 10분 뒤 다시 시도해주세요.', 'rate_limited');
+        const state = bytesToHex(crypto.getRandomValues(new Uint8Array(16)));
+        const authorize = new URL('https://kauth.kakao.com/oauth/authorize');
+        authorize.searchParams.set('response_type', 'code');
+        authorize.searchParams.set('client_id', settings.restKey);
+        authorize.searchParams.set('redirect_uri', settings.redirectUri);
+        authorize.searchParams.set('state', state);
+        return redirectTo(authorize.toString(), [stateCookie(`${state}.${next}`)]);
+      }
+      if (request.method === 'GET' && url.pathname === '/auth/kakao/callback') {
+        const settings = kakaoSettings(env);
+        const [expectedState, nextRaw] = readCookie(request, 'kakao_oauth_state').split('.');
+        const next = authNext(nextRaw);
+        if (!settings.ready) return kakaoFailure(request, next, 503, '카카오 로그인 키가 설정되지 않았습니다. KAKAO_REST_API_KEY와 KAKAO_REDIRECT_URI를 확인해주세요.', 'kakao_not_configured');
+        if (url.searchParams.get('error')) {
+          const denied = url.searchParams.get('error') === 'access_denied';
+          return kakaoFailure(request, next, 401, denied ? '카카오 로그인이 취소되었습니다.' : '카카오 로그인에 실패했습니다. 잠시 후 다시 시도해주세요.', denied ? 'kakao_denied' : 'kakao_failed');
+        }
+        const returnedState = url.searchParams.get('state') || '';
+        if (!expectedState || !returnedState || !safeEqual(expectedState, returnedState)) {
+          return kakaoFailure(request, next, 400, '로그인 상태값이 일치하지 않습니다. 다시 시도해주세요.', 'state_mismatch');
+        }
+        const code = url.searchParams.get('code') || '';
+        if (!code || code.length > 1024) return kakaoFailure(request, next, 400, '카카오 인가 코드가 없습니다. 다시 시도해주세요.', 'kakao_failed');
+        try {
+          const profile = await exchangeKakaoCode(settings, code);
+          if (!profile) return kakaoFailure(request, next, 502, '카카오 로그인에 실패했습니다. 잠시 후 다시 시도해주세요.', 'kakao_failed');
+          const user = await upsertKakaoUser(db, env, profile.kakaoId, profile.nickname);
+          const token = await startSession(db, user.id);
+          const destination = next === 'booking'
+            ? '/?booking=1#booking-seats'
+            : (user.role === 'admin' ? '/?admin=1' : '/?admin=1&auth_error=not_admin');
+          return redirectTo(destination, [sessionCookie(token), clearStateCookie()]);
+        } catch (error) {
+          console.error('kakao_login_failed', { message: String(error?.message || error).slice(0, 180) });
+          return kakaoFailure(request, next, 502, '카카오 로그인에 실패했습니다. 잠시 후 다시 시도해주세요.', 'kakao_failed');
+        }
+      }
+      if (request.method === 'POST' && (url.pathname === '/api/auth/logout' || url.pathname === '/api/admin/logout')) {
+        const token = cookieToken(request);
+        if (token) await db.prepare('DELETE FROM admin_sessions WHERE token_hash=?').bind(await tokenHash(token)).run();
+        return json({ authenticated: false }, 200, { 'set-cookie': clearSessionCookie() });
+      }
+      if (request.method === 'POST' && (url.pathname === '/api/auth/logout-all' || url.pathname === '/api/admin/logout-all')) {
+        const session = await loadSession(request, env);
+        if (session?.user_id) await db.prepare('DELETE FROM admin_sessions WHERE user_id=?').bind(session.user_id).run();
+        return json({ authenticated: false }, 200, { 'set-cookie': clearSessionCookie() });
+      }
+      if (request.method === 'GET' && url.pathname === '/api/admin/session') {
+        const session = await loadSession(request, env);
+        const admin = sessionIsAdmin(session, env);
+        return json({
+          authenticated: admin,
+          nickname: admin ? (session.nickname || '') : '',
+          forbidden: Boolean(session?.user_id && !admin),
+          kakaoConfigured: kakaoSettings(env).ready,
+          passwordLogin: flagOn(env.ADMIN_PASSWORD_LOGIN),
+          bookingRequiresKakao: flagOn(env.REQUIRE_KAKAO_BOOKING),
+        });
+      }
       if (request.method === 'POST' && url.pathname === '/api/admin/login') {
+        if (!flagOn(env.ADMIN_PASSWORD_LOGIN)) return json({ error: '비밀번호 로그인은 꺼져 있습니다. 카카오 로그인을 이용해주세요.' }, 403);
         if (!env.ADMIN_USERNAME) return json({ error: '관리자 아이디가 서버에 설정되지 않았습니다.' }, 503);
         if (!await consumeRateLimit(db, request, 'admin_login', 5, 10 * 60 * 1000)) return json({ error: '로그인 시도가 많습니다. 10분 뒤 다시 시도해주세요.' }, 429);
         const input = await readBody(request);
@@ -367,14 +585,13 @@ export default {
         const passwordValid = usernameValid && password.length <= 128 && await verifyAdminPassword(db, env, password);
         if (!passwordValid) return json({ error: '아이디 또는 비밀번호가 올바르지 않습니다.' }, 401);
         if (!await db.prepare('SELECT id FROM admin_credentials WHERE id=1').first()) await setAdminPassword(db, password);
-        const token = Array.from(crypto.getRandomValues(new Uint8Array(32)), b => b.toString(16).padStart(2, '0')).join('');
-        const hash = await tokenHash(token);
-        const expires = Date.now() + 8 * 60 * 60 * 1000;
-        await db.prepare('INSERT INTO admin_sessions(token_hash,expires_at) VALUES(?,?)').bind(hash, expires).run();
-        return json({ authenticated: true }, 200, { 'set-cookie': `stage_admin=${token}; HttpOnly; Secure; SameSite=Strict; Path=/; Max-Age=28800` });
+        await ensurePasswordAdmin(db);
+        const token = await startSession(db, LOCAL_PASSWORD_USER);
+        return json({ authenticated: true }, 200, { 'set-cookie': sessionCookie(token) });
       }
       if (request.method === 'POST' && url.pathname === '/api/admin/password') {
-        if (!await requireAdmin(request, env)) return json({ error: '운영진 로그인이 필요합니다.' }, 401);
+        const denied = await requireAdmin(request, env);
+        if (denied) return denied;
         const input = await readBody(request);
         const currentPassword = String(input.currentPassword || '');
         const newPassword = String(input.newPassword || '');
@@ -382,33 +599,35 @@ export default {
         if (newPassword.length < 12 || newPassword.length > 128) return json({ error: '새 비밀번호는 12~128자로 입력해주세요.' }, 400);
         if (safeEqual(currentPassword, newPassword)) return json({ error: '현재와 다른 비밀번호를 입력해주세요.' }, 400);
         await setAdminPassword(db, newPassword);
-        await db.prepare('DELETE FROM admin_sessions').run();
-        return json({ changed: true }, 200, { 'set-cookie': 'stage_admin=; HttpOnly; Secure; SameSite=Strict; Path=/; Max-Age=0' });
-      }
-      if (request.method === 'POST' && url.pathname === '/api/admin/logout') {
-        const token = cookieToken(request);
-        if (token) await db.prepare('DELETE FROM admin_sessions WHERE token_hash=?').bind(await tokenHash(token)).run();
-        return json({ authenticated: false }, 200, { 'set-cookie': 'stage_admin=; HttpOnly; Secure; SameSite=Strict; Path=/; Max-Age=0' });
+        await db.prepare('DELETE FROM admin_sessions WHERE user_id = ? OR user_id IS NULL').bind(LOCAL_PASSWORD_USER).run();
+        return json({ changed: true }, 200, { 'set-cookie': clearSessionCookie() });
       }
       if (request.method === 'GET' && url.pathname === '/api/admin/events') {
-        if (!await requireAdmin(request, env)) return json({ error: '운영진 로그인이 필요합니다.' }, 401);
+        const denied = await requireAdmin(request, env);
+        if (denied) return denied;
         const events = (await db.prepare(`SELECT e.*,
           (SELECT COUNT(*) FROM bookings b JOIN event_sessions s ON s.id=b.show_id WHERE s.event_id=e.id) AS booking_count
           FROM events e ORDER BY CASE e.status WHEN 'published' THEN 0 WHEN 'draft' THEN 1 WHEN 'cancelled' THEN 2 ELSE 3 END,e.created_at DESC`).all()).results;
         const result = await Promise.all(events.map(async event => {
           const sessions = (await db.prepare(`SELECT s.id,s.sort_order,s.date_label,s.time_label,s.starts_at,s.status,
-            (SELECT COUNT(*) FROM bookings b WHERE b.show_id=s.id) AS booking_count
+            (SELECT COUNT(*) FROM bookings b WHERE b.show_id=s.id) AS booking_count,
+            (SELECT COUNT(*) FROM booking_seats bs JOIN bookings b ON b.id=bs.booking_id
+              WHERE b.show_id=s.id AND b.status IN ('pending','paid','refund_pending')) AS occupied_seats,
+            (SELECT COUNT(*) FROM booking_seats bs JOIN bookings b ON b.id=bs.booking_id
+              WHERE b.show_id=s.id AND b.status='pending') AS pending_seats
             FROM event_sessions s WHERE s.event_id=? ORDER BY s.sort_order`).bind(event.id).all()).results;
           return { id: event.id, title: event.title, subtitle: event.subtitle, description: event.description, venue: event.venue,
             ticketPrice: event.ticket_price, status: event.status, bookingOpen: event.booking_open === 1,
             bookingCount: event.booking_count, createdAt: event.created_at,
             sessions: sessions.map(session => ({ id: session.id, sortOrder: session.sort_order, dateLabel: session.date_label,
-              timeLabel: session.time_label, startsAt: session.starts_at, status: session.status, bookingCount: session.booking_count })) };
+              timeLabel: session.time_label, startsAt: session.starts_at, status: session.status, bookingCount: session.booking_count,
+              occupiedSeats: session.occupied_seats || 0, pendingSeats: session.pending_seats || 0 })) };
         }));
         return json({ events: result });
       }
       if (request.method === 'POST' && url.pathname === '/api/admin/events') {
-        if (!await requireAdmin(request, env)) return json({ error: '운영진 로그인이 필요합니다.' }, 401);
+        const denied = await requireAdmin(request, env);
+        if (denied) return denied;
         const draft = normalizeEventInput(await readBody(request));
         const id = makeEventId();
         const now = Date.now();
@@ -421,7 +640,8 @@ export default {
       }
       const eventEdit = /^\/api\/admin\/events\/([A-Z0-9-]+)$/i.exec(url.pathname);
       if (request.method === 'PUT' && eventEdit) {
-        if (!await requireAdmin(request, env)) return json({ error: '운영진 로그인이 필요합니다.' }, 401);
+        const denied = await requireAdmin(request, env);
+        if (denied) return denied;
         const eventId = eventEdit[1];
         const current = await db.prepare('SELECT status,booking_open FROM events WHERE id=?').bind(eventId).first();
         if (!current) return json({ error: '공연을 찾지 못했습니다.' }, 404);
@@ -439,7 +659,8 @@ export default {
       }
       const eventAction = /^\/api\/admin\/events\/([A-Z0-9-]+)\/(publish|archive|duplicate)$/i.exec(url.pathname);
       if (request.method === 'POST' && eventAction) {
-        if (!await requireAdmin(request, env)) return json({ error: '운영진 로그인이 필요합니다.' }, 401);
+        const denied = await requireAdmin(request, env);
+        if (denied) return denied;
         const [, eventId, action] = eventAction;
         const source = await db.prepare('SELECT * FROM events WHERE id=?').bind(eventId).first();
         if (!source) return json({ error: '공연을 찾지 못했습니다.' }, 404);
@@ -469,7 +690,8 @@ export default {
       }
       const eventDelete = /^\/api\/admin\/events\/([A-Z0-9-]+)$/i.exec(url.pathname);
       if (request.method === 'DELETE' && eventDelete) {
-        if (!await requireAdmin(request, env)) return json({ error: '운영진 로그인이 필요합니다.' }, 401);
+        const denied = await requireAdmin(request, env);
+        if (denied) return denied;
         const eventId = eventDelete[1];
         const event = await db.prepare('SELECT title FROM events WHERE id=?').bind(eventId).first();
         if (!event) return json({ error: '공연을 찾지 못했습니다.' }, 404);
@@ -483,7 +705,8 @@ export default {
         return json({ deleted: true });
       }
       if (request.method === 'GET' && url.pathname === '/api/admin/checkin-summary') {
-        if (!await requireAdmin(request, env)) return json({ error: '운영진 로그인이 필요합니다.' }, 401);
+        const denied = await requireAdmin(request, env);
+        if (denied) return denied;
         const showId = url.searchParams.get('show') || '1';
         if (!await getEventForSession(db, showId)) return json({ error: '공연 회차를 확인해주세요.' }, 400);
         const totals = await db.prepare(`SELECT COUNT(*) AS total,
@@ -501,7 +724,8 @@ export default {
         return json({ total: totals?.total || 0, checkedIn: totals?.checked_in || 0, rows, recent });
       }
       if (request.method === 'GET' && url.pathname === '/api/admin/bookings') {
-        if (!await requireAdmin(request, env)) return json({ error: '운영진 로그인이 필요합니다.' }, 401);
+        const denied = await requireAdmin(request, env);
+        if (denied) return denied;
         const showId = url.searchParams.get('show') || '1';
         const session = await getEventForSession(db, showId);
         if (!session) return json({ error: '공연 회차를 확인해주세요.' }, 400);
@@ -530,7 +754,8 @@ export default {
           bookingOpen: await getBookingOpen(db, session.event_id) });
       }
       if (request.method === 'POST' && url.pathname === '/api/admin/settings') {
-        if (!await requireAdmin(request, env)) return json({ error: '운영진 로그인이 필요합니다.' }, 401);
+        const denied = await requireAdmin(request, env);
+        if (denied) return denied;
         const input = await readBody(request);
         if (typeof input.bookingOpen !== 'boolean') return json({ error: '예매 접수 설정을 확인해주세요.' }, 400);
         const session = await getEventForSession(db, String(input.showId || '1'));
@@ -543,7 +768,8 @@ export default {
       }
       const confirm = /^\/api\/admin\/bookings\/([A-Z0-9-]+)\/confirm$/.exec(url.pathname);
       if (request.method === 'POST' && confirm) {
-        if (!await requireAdmin(request, env)) return json({ error: '운영진 로그인이 필요합니다.' }, 401);
+        const denied = await requireAdmin(request, env);
+        if (denied) return denied;
         const row = await db.prepare("SELECT * FROM bookings WHERE id=? AND status='pending'").bind(confirm[1]).first();
         if (!row) return json({ error: '입금 대기 중인 예약을 찾지 못했습니다.' }, 404);
         const ticketAccessToken = createTicketAccessToken();
@@ -565,7 +791,8 @@ export default {
       }
       const retrySms = /^\/api\/admin\/bookings\/([A-Z0-9-]+)\/retry-sms$/.exec(url.pathname);
       if (request.method === 'POST' && retrySms) {
-        if (!await requireAdmin(request, env)) return json({ error: '운영진 로그인이 필요합니다.' }, 401);
+        const denied = await requireAdmin(request, env);
+        if (denied) return denied;
         const bookingId = retrySms[1];
         const ticketAccessToken = createTicketAccessToken();
         const ticketAccessHash = await tokenHash(ticketAccessToken);
@@ -586,7 +813,8 @@ export default {
         return json({ notification: 'sending' });
       }
       if (request.method === 'POST' && url.pathname === '/api/admin/tickets/check-in') {
-        if (!await requireAdmin(request, env)) return json({ error: '운영진 로그인이 필요합니다.' }, 401);
+        const denied = await requireAdmin(request, env);
+        if (denied) return denied;
         const input = await readBody(request);
         const ticketId = String(input.ticketId || '').trim().toLowerCase();
         const bookingId = String(input.bookingId || '').trim().toUpperCase();
@@ -614,7 +842,8 @@ export default {
       }
       const cancel = /^\/api\/admin\/bookings\/([A-Z0-9-]+)\/cancel$/.exec(url.pathname);
       if (request.method === 'POST' && cancel) {
-        if (!await requireAdmin(request, env)) return json({ error: '운영진 로그인이 필요합니다.' }, 401);
+        const denied = await requireAdmin(request, env);
+        if (denied) return denied;
         const row = await db.prepare('SELECT status FROM bookings WHERE id=?').bind(cancel[1]).first();
         if (!row || !['pending', 'paid'].includes(row.status)) return json({ error: '취소할 수 있는 예약을 찾지 못했습니다.' }, 404);
         const next = row.status === 'paid' ? 'refund_pending' : 'cancelled';
@@ -623,18 +852,21 @@ export default {
           statements.push(db.prepare('DELETE FROM seat_locks WHERE booking_id=?').bind(cancel[1]));
           statements.push(db.prepare('DELETE FROM performance_seat_locks WHERE booking_id=?').bind(cancel[1]));
           statements.push(db.prepare('DELETE FROM phone_seat_locks WHERE booking_id=?').bind(cancel[1]));
+          statements.push(db.prepare('DELETE FROM kakao_seat_locks WHERE booking_id=?').bind(cancel[1]));
         }
         await db.batch(statements);
         return json({ status: next });
       }
       const refund = /^\/api\/admin\/bookings\/([A-Z0-9-]+)\/refund-complete$/.exec(url.pathname);
       if (request.method === 'POST' && refund) {
-        if (!await requireAdmin(request, env)) return json({ error: '운영진 로그인이 필요합니다.' }, 401);
+        const denied = await requireAdmin(request, env);
+        if (denied) return denied;
         const results = await db.batch([
           db.prepare("UPDATE bookings SET status='refunded',privacy_delete_after=? WHERE id=? AND status='refund_pending'").bind(Date.now() + BOOKING_RETENTION_MS,refund[1]),
           db.prepare('DELETE FROM seat_locks WHERE booking_id=?').bind(refund[1]),
           db.prepare('DELETE FROM performance_seat_locks WHERE booking_id=?').bind(refund[1]),
           db.prepare('DELETE FROM phone_seat_locks WHERE booking_id=?').bind(refund[1]),
+          db.prepare('DELETE FROM kakao_seat_locks WHERE booking_id=?').bind(refund[1]),
         ]);
         if (!results[0]?.meta?.changes) return json({ error: '환불 처리 중인 예약을 찾지 못했습니다.' }, 404);
         return json({ status: 'refunded' });

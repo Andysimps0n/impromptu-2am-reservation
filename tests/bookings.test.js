@@ -18,20 +18,27 @@ describe('관객 예매', () => {
     expect(result.data.seats).toEqual(['B02', 'B03']);
   });
 
-  it('같은 연락처는 회차당 최대 2석만 예매할 수 있다', async () => {
-    const first = await createBooking({ phone: '01022223333', seats: ['B04', 'B05'] });
-    expect(first.status).toBe(201);
-
-    const third = await createBooking({ phone: '01022223333', seats: ['B06'] });
-    expect(third.status).toBe(429);
-    expect(third.data.error).toMatch(/최대 2석/);
-    expect(await seatState('1', 'B06')).toBe('available');
+  it('한 번에 4석을 예매하면 금액은 좌석 수 × 티켓 가격이다', async () => {
+    const result = await createBooking({ seats: ['B10', 'B11', 'B12', 'C03'] });
+    expect(result.status).toBe(201);
+    expect(result.data.amount).toBe(26000);
+    expect(result.data.seats).toEqual(['B10', 'B11', 'B12', 'C03']);
   });
 
-  it('한 요청에서 3석을 고르면 거절한다', async () => {
-    const result = await createBooking({ seats: ['B07', 'B08', 'B09'] });
+  it('같은 연락처는 회차당 최대 4석만 예매할 수 있다', async () => {
+    const first = await createBooking({ phone: '01022223333', seats: ['B04', 'B05', 'B06', 'B07'] });
+    expect(first.status).toBe(201);
+
+    const extra = await createBooking({ phone: '01022223333', seats: ['B08'] });
+    expect(extra.status).toBe(429);
+    expect(extra.data.error).toMatch(/최대 4석/);
+    expect(await seatState('1', 'B08')).toBe('available');
+  });
+
+  it('한 요청에서 5석을 고르면 거절한다', async () => {
+    const result = await createBooking({ seats: ['B07', 'B08', 'B09', 'C06', 'C07'] });
     expect(result.status).toBe(400);
-    expect(result.data.error).toMatch(/최대 2석/);
+    expect(result.data.error).toMatch(/최대 4석/);
   });
 
   it('이미 잡힌 좌석은 다른 사람이 예매할 수 없다', async () => {

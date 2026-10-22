@@ -58,6 +58,45 @@ if (args[0] === 'set-admin-password') {
   process.exit(0);
 }
 
+if (args[0] === 'set-kakao-secrets') {
+  const required = ['KAKAO_REST_API_KEY', 'KAKAO_REDIRECT_URI', 'ADMIN_KAKAO_IDS'];
+  const missing = required.filter(name => !values[name]);
+  if (missing.length) {
+    console.error(`Set ${missing.join(', ')} in .env.cloudflare first.`);
+    process.exit(1);
+  }
+  const redirectUri = values.KAKAO_REDIRECT_URI;
+  const redirectOk = /^https:\/\/[^/\s]+\/auth\/kakao\/callback$/.test(redirectUri)
+    || /^http:\/\/(localhost|127\.0\.0\.1)(:\d+)?\/auth\/kakao\/callback$/.test(redirectUri);
+  if (!redirectOk) {
+    console.error('KAKAO_REDIRECT_URI must be the full callback URL, for example https://example.com/auth/kakao/callback');
+    process.exit(1);
+  }
+  const kakaoIds = values.ADMIN_KAKAO_IDS.split(',').map(item => item.trim()).filter(Boolean);
+  if (!kakaoIds.length || kakaoIds.some(item => !/^\d+$/.test(item))) {
+    console.error('ADMIN_KAKAO_IDS must be a comma-separated list of numeric Kakao member ids.');
+    process.exit(1);
+  }
+  const secretNames = [...required, 'KAKAO_CLIENT_SECRET', 'ADMIN_PASSWORD_LOGIN', 'REQUIRE_KAKAO_BOOKING']
+    .filter(name => values[name]);
+  for (const name of secretNames) {
+    const result = spawnSync('npx', ['--yes', 'wrangler', 'secret', 'put', name], {
+      cwd: root,
+      env: { ...process.env, CLOUDFLARE_ACCOUNT_ID: values.CLOUDFLARE_ACCOUNT_ID, CLOUDFLARE_API_TOKEN: values.CLOUDFLARE_API_TOKEN },
+      encoding: 'utf8',
+      input: `${values[name]}\n`,
+      stdio: ['pipe', 'inherit', 'inherit'],
+    });
+    if (result.error) {
+      console.error(result.error.message);
+      process.exit(1);
+    }
+    if (result.status !== 0) process.exit(result.status ?? 1);
+  }
+  console.log('Kakao login secrets uploaded.');
+  process.exit(0);
+}
+
 if (args[0] === 'set-sms-secrets') {
   const secretNames = ['SOLAPI_API_KEY', 'SOLAPI_API_SECRET', 'SOLAPI_FROM_NUMBER'];
   const missing = secretNames.filter(name => !values[name]);

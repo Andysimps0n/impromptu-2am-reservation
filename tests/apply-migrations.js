@@ -8,6 +8,12 @@ if (!env.TEST_MIGRATIONS) {
 
 env.ADMIN_USERNAME = 'test-admin';
 env.ADMIN_PASSWORD = 'test-admin-password';
+env.ADMIN_PASSWORD_LOGIN = '1';
+env.KAKAO_REST_API_KEY = '';
+env.KAKAO_CLIENT_SECRET = '';
+env.KAKAO_REDIRECT_URI = '';
+env.ADMIN_KAKAO_IDS = '';
+env.REQUIRE_KAKAO_BOOKING = '';
 env.SOLAPI_API_KEY = '';
 env.SOLAPI_API_SECRET = '';
 env.SOLAPI_FROM_NUMBER = '';
@@ -20,6 +26,12 @@ beforeEach(async () => {
   await reset();
   env.ADMIN_USERNAME = 'test-admin';
   env.ADMIN_PASSWORD = 'test-admin-password';
+  env.ADMIN_PASSWORD_LOGIN = '1';
+  env.KAKAO_REST_API_KEY = '';
+  env.KAKAO_CLIENT_SECRET = '';
+  env.KAKAO_REDIRECT_URI = '';
+  env.ADMIN_KAKAO_IDS = '';
+  env.REQUIRE_KAKAO_BOOKING = '';
   env.SOLAPI_API_KEY = '';
   env.SOLAPI_API_SECRET = '';
   env.SOLAPI_FROM_NUMBER = '';

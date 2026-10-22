@@ -4,10 +4,10 @@ Sites의 Cloudflare Worker와 D1을 사용해 배포합니다. 예매 데이터�
 
 - 좌석: A열 12석은 운영진 보유석, B–K열은 각 12석(6-6), L열은 8석(4-4)으로 예매 가능 좌석은 총 128석입니다.
 - 예매: 예약 코드와 연락처로 조회하며, 회차별 연락처당 최대 2석입니다. 입금 대기 좌석은 30분 뒤 해제됩니다.
-- 요청 보호: 예매는 IP당 10분 20회, 예약 조회는 IP당 10분 8회, 관리자 로그인은 IP당 10분 5회로 제한합니다.
+- 요청 보호: 예매는 IP당 10분 20회, 예약 조회는 IP당 10분 8회, 비밀번호 로그인은 IP당 10분 5회, 카카오 로그인 시작은 IP당 10분 30회로 제한합니다.
 - 개인정보 보관: 이름·연락처·입금자명과 연결된 예약·티켓 기록은 공연 종료 90일 뒤 자동 삭제합니다. 환불 완료 예약은 환불 완료 90일 뒤 삭제합니다. 환불 처리 중인 예약은 완료 처리 전까지 유지됩니다. Cloudflare Cron이 매일 03:00 KST에 만료 데이터를 정리합니다.
 - 취소/환불: 입금 대기 예약은 취소 즉시 좌석이 풀립니다. 확정 예약은 환불 대기 상태에서 실제 송금 후 관리자가 완료 처리해야 좌석이 풀립니다.
-- 관리자 로그인: 아이디는 `ADMIN_USERNAME` 런타임 변수로 관리하고, 비밀번호는 D1에 PBKDF2 해시로 저장합니다. 관리자 화면에서 변경할 수 있습니다.
+- 관리자 로그인: 카카오 로그인을 사용합니다. 카카오 회원번호가 `ADMIN_KAKAO_IDS`에 있는 계정만 운영진이 됩니다. 기존 아이디/비밀번호 로그인은 `ADMIN_PASSWORD_LOGIN=1`일 때만 잠시 켜 둘 수 있습니다.
 - 입장 확인: 입금 확인 시 좌석별 QR 티켓을 발급하고, 운영진이 관리자 화면에서 스캔합니다. QR은 한 번만 입장 처리됩니다.
 
 `npm run build`는 HTML과 브라우저 코드를 Worker 파일에 묶습니다. DB 구조 변경은 `drizzle/` 마이그레이션으로 관리하며 각 API 요청 중에는 스키마를 변경하지 않습니다.
@@ -28,7 +28,43 @@ npm run set:cloudflare-admin-password
 npm run deploy:cloudflare
 ```
 
-`ADMIN_PASSWORD`는 로컬 설정 파일에만 입력하고 저장소에 커밋하지 마세요. 마이그레이션은 새 Cloudflare D1 데이터베이스에 적용됩니다.
+`ADMIN_PASSWORD`와 카카오 키는 로컬 설정 파일에만 입력하고 저장소에 커밋하지 마세요. 마이그레이션은 새 Cloudflare D1 데이터베이스에 적용됩니다.
+
+## 카카오 로그인
+
+운영진 화면의 로그인 버튼은 카카오 인가 페이지로 이동합니다. Worker가 인가 코드를 토큰으로 바꾸고, 카카오 `/v2/user/me`로 회원번호를 확인한 뒤 세션 쿠키를 발급합니다. 브라우저가 보내 준 토큰이나 닉네임은 권한 판단에 쓰지 않습니다. 운영진 여부는 `ADMIN_KAKAO_IDS`에 있는 회원번호인지만 봅니다.
+
+키는 `wrangler.jsonc`에 적지 않습니다. 로컬에서는 `.env.example`을 `.dev.vars`로 복사해 채우고, 배포에서는 secret으로 넣습니다.
+
+```sh
+cp .env.example .dev.vars
+npm run migrate:cloudflare
+npm run set:cloudflare-kakao-secrets
+npm run deploy:cloudflare
+```
+
+`npm run set:cloudflare-kakao-secrets`는 `.env.cloudflare`의 `KAKAO_REST_API_KEY`, `KAKAO_REDIRECT_URI`, `ADMIN_KAKAO_IDS`를 읽고, 값이 있는 `KAKAO_CLIENT_SECRET`, `ADMIN_PASSWORD_LOGIN`, `REQUIRE_KAKAO_BOOKING`도 함께 secret으로 올립니다. 변수마다 직접 넣으려면 `npx wrangler secret put 변수이름`을 실행합니다.
+
+| 변수 | 하는 일 |
+| --- | --- |
+| `KAKAO_REST_API_KEY` | 카카오 앱의 REST API 키. 없으면 로그인 버튼이 이유를 알려 주고 멈춥니다. |
+| `KAKAO_CLIENT_SECRET` | 콘솔에서 Client Secret을 켰을 때만 필요합니다. 끄면 비워 둡니다. |
+| `KAKAO_REDIRECT_URI` | 콘솔에 등록한 콜백 주소와 같아야 합니다. 경로는 `/auth/kakao/callback`입니다. |
+| `ADMIN_KAKAO_IDS` | 운영진 카카오 회원번호. `123,456`처럼 쉼표로 구분합니다. |
+| `ADMIN_PASSWORD_LOGIN` | `1`이면 기존 아이디/비밀번호 로그인을 잠시 남겨 둡니다. |
+| `REQUIRE_KAKAO_BOOKING` | `1`이면 예매 전에 카카오 로그인이 필요하고, 회원번호마다 회차당 4석까지입니다. 연락처당 4석 제한도 그대로입니다. |
+
+카카오 콘솔에서 할 일:
+
+1. [카카오 개발자 콘솔](https://developers.kakao.com)에서 애플리케이션을 만듭니다.
+2. **앱 키**의 REST API 키를 `KAKAO_REST_API_KEY`에 넣습니다. JavaScript 키나 Admin 키는 쓰지 않습니다.
+3. **카카오 로그인**을 활성화하고, Redirect URI에 로컬 `http://localhost:8787/auth/kakao/callback`과 배포 주소의 `https://<워커 도메인>/auth/kakao/callback`을 각각 등록합니다. `KAKAO_REDIRECT_URI`는 지금 접속 중인 주소와 글자까지 같아야 합니다.
+4. Client Secret을 켜면 발급된 값을 `KAKAO_CLIENT_SECRET`에 넣습니다. 끄면 이 변수는 비웁니다.
+5. **동의항목**에서 닉네임(`profile_nickname`)만 선택 동의로 켭니다. 회원번호는 로그인하면 기본으로 받을 수 있습니다. 이메일은 켜지 않습니다. 이 앱은 권한을 이메일이나 닉네임으로 판단하지 않습니다.
+6. 카카오 계정으로 한 번 로그인한 뒤, 카카오 개발자 콘솔의 사용자 목록이나 로그인 응답에서 회원번호를 확인해 `ADMIN_KAKAO_IDS`에 넣습니다. 목록을 바꾼 뒤에는 그 계정이 다시 로그인해야 운영진 권한이 반영됩니다. 목록에서 빼면 이미 켜져 있는 세션도 바로 관리자 API를 쓸 수 없습니다.
+7. 스키마를 적용합니다. `npm run migrate:cloudflare`가 `users` 테이블과 세션의 `user_id` 컬럼을 만듭니다.
+
+로그인에 성공하면 `stage_admin` 쿠키가 발급됩니다. 이 쿠키는 HttpOnly, Secure, SameSite=Lax이고 8시간 뒤 만료됩니다. 관리자 화면의 **로그아웃**은 지금 기기만, **모든 기기에서 로그아웃**은 그 계정의 세션을 전부 지웁니다.
 
 ## 공연 관리
 
