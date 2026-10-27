@@ -69,6 +69,21 @@ const consumeRateLimit = async (db, request, action, limit, windowMs) => {
     DO UPDATE SET request_count=MIN(request_count+1,?) RETURNING request_count`).bind(action,keyHash,windowStart,limit + 1).first();
   return Number(row?.request_count || 0) <= limit;
 };
+const DORM_NAMES = ['장기려', '카이퍼', '로뎀', '벧엘'];
+const randomInt = max => {
+  // Rejection sampling keeps crypto.getRandomValues uniform over 0..max-1.
+  const limit = Math.floor(0x100000000 / max) * max;
+  const buffer = new Uint32Array(1);
+  do crypto.getRandomValues(buffer); while (buffer[0] >= limit);
+  return buffer[0] % max;
+};
+const createLookupCode = () => `${DORM_NAMES[randomInt(DORM_NAMES.length)]} ${101 + randomInt(401)}호`;
+const normalizeLookupCode = value => {
+  const compact = String(value || '').replace(/\s+/g, '');
+  const dorm = compact.match(/^(장기려|카이퍼|로뎀|벧엘)(\d{3})호?$/);
+  if (dorm) return { lookupCode: `${dorm[1]} ${dorm[2]}호` };
+  return { id: compact.toUpperCase() };
+};
 const createTicketAccessToken = () => {
   // 96-bit random bearer token keeps the branded link within the 90-byte SMS limit.
   const bytes = crypto.getRandomValues(new Uint8Array(12));
@@ -85,7 +100,7 @@ const bookingRow = async (db, row) => {
   const session = await db.prepare(`SELECT e.title,e.subtitle,e.venue,s.sort_order,s.date_label,s.time_label
     FROM event_sessions s JOIN events e ON e.id=s.event_id WHERE s.id=?`).bind(row.show_id || '1').first();
   return ({
-  id: row.id, showId: row.show_id || '1', name: row.name, phone: maskPhone(row.phone), payer: row.payer,
+  id: row.id, code: row.lookup_code || row.id, showId: row.show_id || '1', name: row.name, phone: maskPhone(row.phone), payer: row.payer,
   eventTitle: session?.title || '', subtitle: session?.subtitle || '', venue: session?.venue || '',
   showNumber: session?.sort_order || 1, dateLabel: session?.date_label || '', timeLabel: session?.time_label || '',
   seats: (await db.prepare('SELECT seat FROM booking_seats WHERE booking_id=? ORDER BY seat').bind(row.id).all()).results.map(x => x.seat),
@@ -116,7 +131,7 @@ const adminBookingRows = async (db, rows, showId) => {
     ticketsByBooking.get(item.booking_id).push({ id: item.id, seat: item.seat, status: item.status, checkedInAt: item.checked_in_at });
   }
   return rows.map(row => ({
-    id: row.id, showId: row.show_id || '1', name: row.name, phone: formatPhone(row.phone), payer: row.payer,
+    id: row.id, code: row.lookup_code || row.id, showId: row.show_id || '1', name: row.name, phone: formatPhone(row.phone), payer: row.payer,
     eventTitle: session?.title || '', venue: session?.venue || '', showNumber: session?.sort_order || 1,
     dateLabel: session?.date_label || '', timeLabel: session?.time_label || '',
     seats: seatsByBooking.get(row.id) || [], tickets: row.status === 'paid' ? ticketsByBooking.get(row.id) || [] : [],
@@ -441,12 +456,13 @@ export default {
         const existing = await db.prepare('SELECT COUNT(*) AS count FROM phone_seat_locks WHERE show_id=? AND phone=?').bind(showId, phone).first();
         if (existing.count + seats.length > 4) return json({ error: '연락처 하나당 최대 4석까지 예매할 수 있습니다.' }, 429);
         const id = `STG-${Array.from(crypto.getRandomValues(new Uint8Array(5)), b => b.toString(16).padStart(2, '0')).join('').toUpperCase()}`;
+        const code = createLookupCode();
         const createdAt = Date.now();
-        const statements = [db.prepare(`INSERT INTO bookings(id,name,phone,payer,amount,status,created_at,show_id,user_id)
-          SELECT ?,?,?,?,?,'pending',?,?,? WHERE EXISTS (
+        const statements = [db.prepare(`INSERT INTO bookings(id,name,phone,payer,amount,status,created_at,show_id,user_id,lookup_code)
+          SELECT ?,?,?,?,?,'pending',?,?,?,? WHERE EXISTS (
             SELECT 1 FROM event_sessions s JOIN events e ON e.id=s.event_id
             WHERE s.id=? AND s.event_id=? AND s.status='scheduled' AND e.status='published' AND e.booking_open=1
-          )`).bind(id, name, phone, payer, seats.length * session.ticket_price, createdAt, showId, bookingUser?.id || null, showId, session.event_id)];
+          )`).bind(id, name, phone, payer, seats.length * session.ticket_price, createdAt, showId, bookingUser?.id || null, code, showId, session.event_id)];
         for (const seat of seats) {
           statements.push(db.prepare('INSERT INTO booking_seats(seat,booking_id) SELECT ?,? WHERE EXISTS (SELECT 1 FROM bookings WHERE id=?)').bind(seat, id, id));
           statements.push(db.prepare('INSERT INTO performance_seat_locks(show_id,seat,booking_id) SELECT ?,?,? WHERE EXISTS (SELECT 1 FROM bookings WHERE id=?)').bind(showId, seat, id, id));
@@ -481,14 +497,16 @@ export default {
           if (/unique constraint|primary key|constraint failed/i.test(String(error?.message || error))) return json({ error: '선택한 좌석 중 이미 예약된 좌석이 있습니다. 좌석을 다시 선택해주세요.' }, 409);
           return json({ error: '예약 저장 중 문제가 발생했습니다. 잠시 후 다시 시도해주세요.' }, 503);
         }
-        return json({ id, seats, showId, amount: seats.length * session.ticket_price }, 201);
+        return json({ id, code, seats, showId, amount: seats.length * session.ticket_price }, 201);
       }
       if (request.method === 'POST' && url.pathname === '/api/booking-lookup') {
         if (!await consumeRateLimit(db, request, 'booking_lookup', 8, 10 * 60 * 1000)) return json({ error: '조회 시도가 많습니다. 10분 뒤 다시 확인해주세요.' }, 429);
         const input = await readBody(request);
-        const id = String(input.id || '').trim().toUpperCase();
+        const { id, lookupCode } = normalizeLookupCode(input.id);
         const phone = normalizePhone(input.phone);
-        const row = await db.prepare('SELECT * FROM bookings WHERE id=? AND phone=?').bind(id, phone).first();
+        const row = lookupCode
+          ? await db.prepare('SELECT * FROM bookings WHERE lookup_code=? AND phone=? ORDER BY created_at DESC LIMIT 1').bind(lookupCode, phone).first()
+          : await db.prepare('SELECT * FROM bookings WHERE id=? AND phone=?').bind(id, phone).first();
         if (!row) return json({ error: '예약 정보가 일치하지 않습니다. 예약 코드와 연락처를 확인해주세요.' }, 404);
         await cleanExpired(db, row.show_id || '1');
         return json(await bookingRow(db, row));

@@ -779,7 +779,10 @@ export function AdminApp({ onBackToBooking, authError = '' }) {
             <p>
               <strong>{selectedOrder.order.name}</strong>
               <br />
-              예약 코드 {selectedOrder.order.id}
+              예약 코드 {selectedOrder.order.code || selectedOrder.order.id}
+              {selectedOrder.order.code && selectedOrder.order.code !== selectedOrder.order.id
+                ? ` (관리번호 ${selectedOrder.order.id})`
+                : ''}
               <br />
               연락처 {selectedOrder.order.phone}
               <br />
@@ -1039,7 +1042,8 @@ function ShowSelect({ sessions, value, onChange, label }) {
 
 function orderMeta(order) {
   const smsLabel = SMS_STATUS_LABEL[order.notificationStatus] || '—';
-  return `${order.id} · ${new Date(order.createdAt).toLocaleString('ko-KR')} · 입금자 ${order.payer} · 문자: ${smsLabel}`;
+  const codeLabel = order.code && order.code !== order.id ? `${order.code} (${order.id})` : order.id;
+  return `${codeLabel} · ${new Date(order.createdAt).toLocaleString('ko-KR')} · 입금자 ${order.payer} · 문자: ${smsLabel}`;
 }
 
 function OrderCard({ order, onAction }) {

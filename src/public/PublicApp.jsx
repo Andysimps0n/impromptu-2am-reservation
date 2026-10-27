@@ -466,7 +466,7 @@ export function PublicApp({ authError = '' }) {
           onClose={() => setModal(null)}
           onLookup={() => {
             setModal(null);
-            openLookup(modal.booking.id);
+            openLookup(modal.booking.code || modal.booking.id);
           }}
         />
       )}
@@ -829,7 +829,7 @@ function LookupPage({ prefill, onLookup }) {
               <input
                 id="lookup-code"
                 required
-                placeholder="STG-ABC123"
+                placeholder="예: 장기려 402호"
                 value={id}
                 onChange={event => setId(event.target.value)}
               />
@@ -877,7 +877,7 @@ function BookingSummary({ booking }) {
         <strong>
           {booking.showNumber}공 · {booking.dateLabel} {booking.timeLabel}
         </strong>
-        예약 코드 {booking.id} · {booking.name} · 좌석 {booking.seats.join(', ')}
+        예약 코드 {booking.code || booking.id} · {booking.name} · 좌석 {booking.seats.join(', ')}
         <br />
         {Number(booking.amount).toLocaleString()}원 · 입금자 {booking.payer}
         <br />
@@ -956,7 +956,7 @@ function Dialog({ children, onClose, className = '' }) {
 }
 
 function BookingDialog({ session, seats, price, onClose, onSubmit }) {
-  const [values, setValues] = useState({ name: '', phone: '', payer: '' });
+  const [values, setValues] = useState({ name: '', phone: '', phoneConfirm: '', payer: '' });
   const [payerSame, setPayerSame] = useState(true);
   const [errors, setErrors] = useState({});
   const [privacy, setPrivacy] = useState(false);
@@ -978,8 +978,12 @@ function BookingDialog({ session, seats, price, onClose, onSubmit }) {
       (text.replace(/\D/g, '').length < 10 || text.replace(/\D/g, '').length > 11)
     )
       return '연락처 숫자를 10~11자리로 입력해주세요.';
+    if (field === 'phoneConfirm' && !text) return '확인을 위해 연락처를 한 번 더 입력해주세요.';
     return '';
   };
+  const phoneMismatch =
+    values.phoneConfirm.trim() !== '' &&
+    values.phone.replace(/\D/g, '') !== values.phoneConfirm.replace(/\D/g, '');
   const change = (field, value) => {
     setValues(current => ({ ...current, [field]: value }));
     if (errors[field]) setErrors(current => ({ ...current, [field]: validate(field, value) }));
@@ -1011,10 +1015,12 @@ function BookingDialog({ session, seats, price, onClose, onSubmit }) {
     const next = {
       name: validate('name', values.name),
       phone: validate('phone', values.phone),
+      phoneConfirm: validate('phoneConfirm', values.phoneConfirm),
       payer: payerSame ? '' : validate('payer', values.payer),
     };
     setErrors(next);
     if (Object.values(next).some(Boolean)) return;
+    if (phoneMismatch) return;
     if (!privacy) {
       setServerError('개인정보 수집에 동의해주세요.');
       return;
@@ -1127,6 +1133,32 @@ function BookingDialog({ session, seats, price, onClose, onSubmit }) {
               </small>
             )}
           </div>
+          <div className="field">
+            <label htmlFor="book-phone-confirm">연락처 확인</label>
+            <input
+              id="book-phone-confirm"
+              name="phoneConfirm"
+              autoComplete="off"
+              type="tel"
+              inputMode="tel"
+              maxLength={20}
+              placeholder="연락처를 한 번 더 입력해주세요"
+              value={values.phoneConfirm}
+              aria-invalid={Boolean(errors.phoneConfirm) || phoneMismatch}
+              onChange={e => change('phoneConfirm', e.target.value)}
+              onBlur={e =>
+                setErrors(current => ({
+                  ...current,
+                  phoneConfirm: validate('phoneConfirm', e.target.value),
+                }))
+              }
+            />
+            {(errors.phoneConfirm || phoneMismatch) && (
+              <small className="field-error" aria-live="polite">
+                {errors.phoneConfirm || '연락처가 서로 일치하지 않아요. 다시 확인해주세요.'}
+              </small>
+            )}
+          </div>
           <label className="same-payer">
             <input
               type="checkbox"
@@ -1179,7 +1211,7 @@ function BookingDialog({ session, seats, price, onClose, onSubmit }) {
             {serverError}
           </div>
         )}
-        <button className="primary" disabled={busy}>
+        <button className="primary" disabled={busy || phoneMismatch}>
           {busy ? '예약 처리 중…' : '입금 대기 예약하기'}
         </button>
       </form>
@@ -1196,6 +1228,40 @@ function BookingDialog({ session, seats, price, onClose, onSubmit }) {
 }
 
 function BookingSuccess({ booking, session, onClose, onLookup }) {
+  const code = booking.code || booking.id;
+  const [copied, setCopied] = useState('');
+  const copyTimer = useRef(null);
+  useEffect(() => () => clearTimeout(copyTimer.current), []);
+  const copyCode = async () => {
+    let ok = false;
+    try {
+      if (navigator.clipboard?.writeText) {
+        await navigator.clipboard.writeText(code);
+        ok = true;
+      }
+    } catch {
+      ok = false;
+    }
+    if (!ok) {
+      // navigator.clipboard를 못 쓰는 환경(비보안 연결, 오래된 브라우저)용 대체 복사
+      try {
+        const area = document.createElement('textarea');
+        area.value = code;
+        area.setAttribute('readonly', '');
+        area.style.position = 'fixed';
+        area.style.opacity = '0';
+        document.body.appendChild(area);
+        area.select();
+        ok = document.execCommand('copy');
+        document.body.removeChild(area);
+      } catch {
+        ok = false;
+      }
+    }
+    setCopied(ok ? '복사됨' : '복사하지 못했어요. 코드를 길게 눌러 선택해 주세요.');
+    clearTimeout(copyTimer.current);
+    copyTimer.current = setTimeout(() => setCopied(''), 2000);
+  };
   return (
     <Dialog onClose={onClose}>
       <div className="success">
@@ -1208,7 +1274,17 @@ function BookingSuccess({ booking, session, onClose, onLookup }) {
           <br />
           입금 확인 전까지 좌석은 30분간 확보됩니다.
         </p>
-        <div className="code">{booking.id}</div>
+        <div className="code">{code}</div>
+        <div className="code-copy">
+          <button type="button" className="code-copy-button" onClick={copyCode}>
+            코드 복사
+          </button>
+          {copied && (
+            <span className="code-copy-status" role="status">
+              {copied}
+            </span>
+          )}
+        </div>
         <div style={{ margin: '0 0 12px' }}>
           <span className="badge">● 입금 대기</span>
         </div>

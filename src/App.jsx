@@ -3,6 +3,9 @@ import { PublicApp, pageFromHash } from './public/PublicApp.jsx';
 import { AdminApp } from './admin/AdminApp.jsx';
 import { PrivacySheet } from './public/PrivacySheet.jsx';
 
+// 고객센터 카카오톡 오픈채팅 링크: 아래 따옴표 안에 오픈채팅 주소를 붙여 넣으세요. 비어 있으면 버튼이 비활성화됩니다.
+const OPEN_CHAT_URL = '';
+
 export function App() {
   const initialParams = new URLSearchParams(location.search);
   const adminEntry = initialParams.get('admin') === '1';
@@ -62,6 +65,21 @@ export function App() {
             <button className="footer-admin" type="button" onClick={() => setView('admin')}>
               운영자 로그인
             </button>
+            <span aria-hidden="true">·</span>
+            {OPEN_CHAT_URL ? (
+              <a
+                className="footer-openchat"
+                href={OPEN_CHAT_URL}
+                target="_blank"
+                rel="noopener noreferrer"
+              >
+                카카오톡 문의
+              </a>
+            ) : (
+              <button className="footer-openchat" type="button" disabled title="오픈채팅 링크 준비 중">
+                카카오톡 문의
+              </button>
+            )}
             <span aria-hidden="true">·</span>
             <a
               className="footer-instagram"
