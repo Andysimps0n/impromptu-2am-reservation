@@ -114,6 +114,7 @@ export function PublicApp({ authError = '' }) {
   const [seatData, setSeatData] = useState(null);
   const [selectedSeats, setSelectedSeats] = useState([]);
   const [seatError, setSeatError] = useState('');
+  const [seatsRefreshing, setSeatsRefreshing] = useState(false);
   const [lookupPrefill, setLookupPrefill] = useState('');
   const [modal, setModal] = useState(null);
   const [toast, setToast] = useState('');
@@ -172,6 +173,15 @@ export function PublicApp({ authError = '' }) {
     },
     [selectedShow]
   );
+  const reloadSeats = async () => {
+    if (!selectedShow || seatsRefreshing) return;
+    setSeatsRefreshing(true);
+    try {
+      await refreshSeats(selectedShow);
+    } finally {
+      setSeatsRefreshing(false);
+    }
+  };
 
   useEffect(() => {
     const onChange = () => setHash(location.hash);
@@ -318,6 +328,14 @@ export function PublicApp({ authError = '' }) {
               <div className="panel seat-panel">
                 <div className="section-head">
                   <h2>좌석을 선택해주세요</h2>
+                  <button
+                    className="admin-action"
+                    type="button"
+                    disabled={!selectedShow || seatsRefreshing}
+                    onClick={reloadSeats}
+                  >
+                    {seatsRefreshing ? '조회 중' : '현황 조회'}
+                  </button>
                 </div>
                 {(seatError || !event || !bookingOpen) && (
                   <div className="booking-closed" role="status">

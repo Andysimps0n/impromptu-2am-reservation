@@ -2,6 +2,26 @@ import { describe, expect, it } from 'vitest';
 import { api, createBooking, loginAdmin, seedBooking, seatState } from './helpers.js';
 
 describe('관객 예매', () => {
+  it('같은 좌석에 1000명이 동시에 신청하면 한 명만 성공한다', async () => {
+    const seat = 'C50';
+    const results = await Promise.all(
+      Array.from({ length: 1000 }, (_, index) => createBooking({
+        seats: ['C50'],
+        phone: `010${String(70000000 + index).padStart(8, '0')}`,
+        ip: `203.0.113.${index + 1}`,
+        name: `관객${index}`,
+      })),
+    );
+  
+    const winners = results.filter(result => result.status === 201);
+    const conflicts = results.filter(result => result.status === 409);
+  
+    expect(winners).toHaveLength(1);
+    expect(conflicts).toHaveLength(99);
+    expect(winners[0].data.seats).toEqual([seat]);
+    expect(await seatState('1', seat)).toBe('held');
+  });
+
   it('유효한 예매는 예약 코드와 금액을 만든다', async () => {
     const result = await createBooking({ seats: ['B01'] });
     expect(result.status).toBe(201);
@@ -129,10 +149,10 @@ describe('관객 예매', () => {
     expect(lookup.status).toBe(404);
   });
 
-  it('입금 확인된 좌석은 sold, 환불 대기 좌석은 refund_pending으로 보인다', async () => {
+  it('입금 확인된 좌석만 sold로 보이고, 환불 대기 좌석은 다시 고를 수 있다', async () => {
     await seedBooking({ id: 'STG-SOLD01', phone: '01010101010', seats: ['H01'], status: 'paid' });
     await seedBooking({ id: 'STG-REF001', phone: '01010101011', seats: ['H02'], status: 'refund_pending' });
     expect(await seatState('1', 'H01')).toBe('sold');
-    expect(await seatState('1', 'H02')).toBe('refund_pending');
+    expect(await seatState('1', 'H02')).toBe('available');
   });
 });

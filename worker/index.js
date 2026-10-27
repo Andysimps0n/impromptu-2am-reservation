@@ -245,16 +245,20 @@ const exchangeKakaoCode = async (settings, code) => {
   }
   return { kakaoId, nickname };
 };
+// 좌석을 차지하는 기록은 bookings 상태와 별도다. 취소·환불 대기로 넘어가면 이 잠금을 지워야 다음 사람이 그 좌석을 고를 수 있다.
+const releaseSeatLocks = (db, bookingId) => [
+  db.prepare('DELETE FROM seat_locks WHERE booking_id=?').bind(bookingId),
+  db.prepare('DELETE FROM performance_seat_locks WHERE booking_id=?').bind(bookingId),
+  db.prepare('DELETE FROM phone_seat_locks WHERE booking_id=?').bind(bookingId),
+  db.prepare('DELETE FROM kakao_seat_locks WHERE booking_id=?').bind(bookingId),
+];
 const cleanExpired = async (db, showId) => {
   const cutoff = Date.now() - HOLD_MS;
   const ids = (await db.prepare("SELECT id FROM bookings WHERE show_id=? AND status='pending' AND created_at<? ORDER BY created_at LIMIT 256").bind(showId,cutoff).all()).results;
   for (let offset = 0; offset < ids.length; offset += 20) {
     const statements = ids.slice(offset, offset + 20).flatMap(({ id }) => [
       db.prepare("UPDATE bookings SET status='expired' WHERE id=? AND status='pending'").bind(id),
-      db.prepare('DELETE FROM seat_locks WHERE booking_id=?').bind(id),
-      db.prepare('DELETE FROM performance_seat_locks WHERE booking_id=?').bind(id),
-      db.prepare('DELETE FROM phone_seat_locks WHERE booking_id=?').bind(id),
-      db.prepare('DELETE FROM kakao_seat_locks WHERE booking_id=?').bind(id),
+      ...releaseSeatLocks(db, id),
     ]);
     await db.batch(statements);
   }
@@ -406,8 +410,8 @@ export default {
         if (!session || session.event_status !== 'published' || session.session_status !== 'scheduled') return json({ error: '공연 회차를 확인해주세요.' }, 400);
         await cleanExpired(db, showId);
         const states = Object.fromEntries(ALL_SEATS.map(seat => [seat, RESERVED.has(seat) ? 'reserved' : 'available']));
-        const booked = (await db.prepare("SELECT l.seat,b.status FROM performance_seat_locks l JOIN bookings b ON b.id=l.booking_id WHERE l.show_id=? AND b.status IN ('pending','paid','refund_pending')").bind(showId).all()).results;
-        for (const row of booked) states[row.seat] = row.status === 'paid' ? 'sold' : row.status === 'refund_pending' ? 'refund_pending' : 'held';
+        const booked = (await db.prepare("SELECT l.seat,b.status FROM performance_seat_locks l JOIN bookings b ON b.id=l.booking_id WHERE l.show_id=? AND b.status IN ('pending','paid')").bind(showId).all()).results;
+        for (const row of booked) states[row.seat] = row.status === 'paid' ? 'sold' : 'held';
         return json({ seats: states, price: session.ticket_price, bookingOpen: await getBookingOpen(db, session.event_id) });
       }
       if (request.method === 'POST' && url.pathname === '/api/bookings') {
@@ -612,7 +616,7 @@ export default {
           const sessions = (await db.prepare(`SELECT s.id,s.sort_order,s.date_label,s.time_label,s.starts_at,s.status,
             (SELECT COUNT(*) FROM bookings b WHERE b.show_id=s.id) AS booking_count,
             (SELECT COUNT(*) FROM booking_seats bs JOIN bookings b ON b.id=bs.booking_id
-              WHERE b.show_id=s.id AND b.status IN ('pending','paid','refund_pending')) AS occupied_seats,
+              WHERE b.show_id=s.id AND b.status IN ('pending','paid')) AS occupied_seats,
             (SELECT COUNT(*) FROM booking_seats bs JOIN bookings b ON b.id=bs.booking_id
               WHERE b.show_id=s.id AND b.status='pending') AS pending_seats
             FROM event_sessions s WHERE s.event_id=? ORDER BY s.sort_order`).bind(event.id).all()).results;
@@ -742,7 +746,7 @@ export default {
         const pageRows = (await query.all()).results;
         const hasMore = pageRows.length > limit;
         const rows = pageRows.slice(0,limit);
-        const activeRows = (await db.prepare("SELECT * FROM bookings WHERE show_id=? AND status IN ('pending','paid','refund_pending') ORDER BY created_at DESC LIMIT 128").bind(showId).all()).results;
+        const activeRows = (await db.prepare("SELECT * FROM bookings WHERE show_id=? AND status IN ('pending','paid') ORDER BY created_at DESC LIMIT 128").bind(showId).all()).results;
         const summary = await db.prepare(`SELECT COUNT(*) AS total_bookings,
           SUM(CASE WHEN status='pending' THEN 1 ELSE 0 END) AS pending_bookings,
           (SELECT COUNT(*) FROM booking_seats s JOIN bookings b ON b.id=s.booking_id WHERE b.show_id=? AND b.status='paid') AS confirmed_seats
@@ -847,14 +851,11 @@ export default {
         const row = await db.prepare('SELECT status FROM bookings WHERE id=?').bind(cancel[1]).first();
         if (!row || !['pending', 'paid'].includes(row.status)) return json({ error: '취소할 수 있는 예약을 찾지 못했습니다.' }, 404);
         const next = row.status === 'paid' ? 'refund_pending' : 'cancelled';
-        const statements = [db.prepare('UPDATE bookings SET status=? WHERE id=?').bind(next, cancel[1])];
-        if (next === 'cancelled') {
-          statements.push(db.prepare('DELETE FROM seat_locks WHERE booking_id=?').bind(cancel[1]));
-          statements.push(db.prepare('DELETE FROM performance_seat_locks WHERE booking_id=?').bind(cancel[1]));
-          statements.push(db.prepare('DELETE FROM phone_seat_locks WHERE booking_id=?').bind(cancel[1]));
-          statements.push(db.prepare('DELETE FROM kakao_seat_locks WHERE booking_id=?').bind(cancel[1]));
-        }
-        await db.batch(statements);
+        // 환불 대기여도 좌석은 바로 연다. 예약 행은 환불 완료를 누를 때까지 남긴다.
+        await db.batch([
+          db.prepare('UPDATE bookings SET status=? WHERE id=?').bind(next, cancel[1]),
+          ...releaseSeatLocks(db, cancel[1]),
+        ]);
         return json({ status: next });
       }
       const refund = /^\/api\/admin\/bookings\/([A-Z0-9-]+)\/refund-complete$/.exec(url.pathname);
@@ -863,10 +864,7 @@ export default {
         if (denied) return denied;
         const results = await db.batch([
           db.prepare("UPDATE bookings SET status='refunded',privacy_delete_after=? WHERE id=? AND status='refund_pending'").bind(Date.now() + BOOKING_RETENTION_MS,refund[1]),
-          db.prepare('DELETE FROM seat_locks WHERE booking_id=?').bind(refund[1]),
-          db.prepare('DELETE FROM performance_seat_locks WHERE booking_id=?').bind(refund[1]),
-          db.prepare('DELETE FROM phone_seat_locks WHERE booking_id=?').bind(refund[1]),
-          db.prepare('DELETE FROM kakao_seat_locks WHERE booking_id=?').bind(refund[1]),
+          ...releaseSeatLocks(db, refund[1]),
         ]);
         if (!results[0]?.meta?.changes) return json({ error: '환불 처리 중인 예약을 찾지 못했습니다.' }, 404);
         return json({ status: 'refunded' });

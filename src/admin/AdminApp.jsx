@@ -86,6 +86,7 @@ export function AdminApp({ onBackToBooking, authError = '' }) {
   const [error, setError] = useState('');
   const [toast, setToast] = useState('');
   const [busy, setBusy] = useState(false);
+  const [gridRefreshing, setGridRefreshing] = useState(false);
   const [editor, setEditor] = useState(false);
   const [modal, setModal] = useState('');
   const [scanner, setScanner] = useState(false);
@@ -160,6 +161,15 @@ export function AdminApp({ onBackToBooking, authError = '' }) {
     const timer = setInterval(() => refresh(eventId, showId, cursor, checkinShowId), 12000);
     return () => clearInterval(timer);
   }, [auth, screen, eventId, showId, checkinShowId, cursor, refresh]);
+  const reloadGrid = async () => {
+    if (!showId || gridRefreshing) return;
+    setGridRefreshing(true);
+    try {
+      await refresh(eventId, showId, cursor, checkinShowId);
+    } finally {
+      setGridRefreshing(false);
+    }
+  };
 
   const notify = message => {
     setToast(message);
@@ -330,12 +340,18 @@ export function AdminApp({ onBackToBooking, authError = '' }) {
           {screen === 'detail' && event && (
             <button
               type="button"
-              className={`booking-chip ${bookingIsOpen ? 'is-open' : 'is-closed'}`}
+              role="switch"
+              aria-checked={bookingIsOpen}
+              className={`booking-switch ${bookingIsOpen ? 'is-open' : 'is-closed'}`}
               disabled={busy || event.status !== 'published' || !showId}
+              aria-label={bookingIsOpen ? '예매 접수 중. 누르면 대기로 바꿉니다.' : '예매 대기 중. 누르면 접수를 엽니다.'}
               title={event.status !== 'published' ? '공연을 먼저 게시해주세요.' : bookingIsOpen ? '누르면 예매 접수를 닫습니다.' : '누르면 예매 접수를 엽니다.'}
               onClick={toggleBooking}
             >
-              {bookingIsOpen ? '접수중' : '대기중'}
+              <span className="booking-switch-track" aria-hidden="true">
+                <span className="booking-switch-knob" />
+              </span>
+              <span className="booking-switch-label">{bookingIsOpen ? '접수중' : '대기중'}</span>
             </button>
           )}
         </div>
@@ -503,7 +519,17 @@ export function AdminApp({ onBackToBooking, authError = '' }) {
   );
 
   const activeOrders = bookings?.activeBookings || [];
-  const seatMap = <AdminSeatMap orders={activeOrders} onSeat={setSelectedOrder} />;
+  const seatMap = (
+    <AdminSeatMap
+      sessions={event?.sessions || []}
+      showId={showId}
+      onSelectShow={selectSession}
+      orders={activeOrders}
+      onSeat={setSelectedOrder}
+      onRefresh={reloadGrid}
+      refreshing={gridRefreshing}
+    />
+  );
   const detail = event && (
     <>
       <section className="panel event-context">
@@ -769,7 +795,7 @@ export function AdminApp({ onBackToBooking, authError = '' }) {
   );
 }
 
-function AdminSeatMap({ orders, onSeat }) {
+function AdminSeatMap({ sessions, showId, onSelectShow, orders, onSeat, onRefresh, refreshing }) {
   const states = useMemo(() => {
     const map = new Map();
     for (const order of orders)
@@ -783,9 +809,7 @@ function AdminSeatMap({ orders, onSeat }) {
                 ? 'checked_in'
                 : order.status === 'paid'
                   ? 'sold'
-                  : order.status === 'refund_pending'
-                    ? 'refund_pending'
-                    : 'available',
+                  : 'available',
         });
       }
     return map;
@@ -793,8 +817,34 @@ function AdminSeatMap({ orders, onSeat }) {
   return (
     <section className="panel admin-seat-panel">
       <div className="admin-seat-heading">
-        <h2>선택 회차 좌석 배치도</h2>
-        <p>예약된 좌석을 누르면 예약 상세를 확인할 수 있습니다.</p>
+        <div>
+          <h2>선택 회차 좌석 배치도</h2>
+          <p>예약된 좌석을 누르면 예약 상세를 확인할 수 있습니다.</p>
+        </div>
+        <div className="admin-seat-tools">
+          <div className="show-chips admin-show-switch" role="radiogroup" aria-label="좌석을 볼 회차">
+            {sessions.map(item => {
+              const active = item.id === showId;
+              return (
+                <button
+                  key={item.id}
+                  className={`show-chip ${active ? 'active' : ''}`}
+                  type="button"
+                  role="radio"
+                  aria-checked={active}
+                  onClick={() => {
+                    if (item.id !== showId) onSelectShow(item.id);
+                  }}
+                >
+                  {item.sortOrder}공
+                </button>
+              );
+            })}
+          </div>
+          <button className="admin-action" type="button" disabled={refreshing} onClick={onRefresh}>
+            {refreshing ? '조회 중' : '현황 조회'}
+          </button>
+        </div>
       </div>
       <div className="admin-seat-scroll">
         <div className="admin-seat-board">
@@ -844,10 +894,6 @@ function AdminSeatMap({ orders, onSeat }) {
         <span>
           <i className="dot checked-in" />
           입장 완료
-        </span>
-        <span>
-          <i className="dot refund_pending" />
-          환불 대기
         </span>
       </div>
     </section>
@@ -1086,7 +1132,7 @@ function OrderCard({ order, onAction }) {
               onClick={() =>
                 window.confirm(
                   order.status === 'paid'
-                    ? '환불 대기로 전환합니다. 실제 송금 후 환불 완료 처리해야 합니다.'
+                    ? '환불 대기로 바꾸고 좌석은 바로 다시 엽니다. 송금한 뒤에는 환불 완료를 눌러주세요.'
                     : '예약을 취소하고 좌석을 즉시 해제할까요?'
                 ) && onAction(order.id, 'cancel')
               }

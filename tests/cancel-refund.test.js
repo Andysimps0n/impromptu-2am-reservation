@@ -18,7 +18,7 @@ describe('취소와 환불', () => {
     expect(again.status).toBe(201);
   });
 
-  it('확정 예약을 취소하면 환불 대기가 되고 좌석은 아직 잡혀 있다', async () => {
+  it('확정 예약을 취소하면 환불 대기가 되고 좌석은 바로 다시 열린다', async () => {
     const id = await seedBooking({ phone: '01025252525', seats: ['D05'], status: 'paid' });
     const admin = await loginAdmin();
     const cancelled = await api(`/api/admin/bookings/${id}/cancel`, {
@@ -28,10 +28,10 @@ describe('취소와 환불', () => {
     });
     expect(cancelled.status).toBe(200);
     expect(cancelled.data.status).toBe('refund_pending');
-    expect(await seatState('1', 'D05')).toBe('refund_pending');
+    expect(await seatState('1', 'D05')).toBe('available');
 
     const taken = await createBooking({ phone: '01026262626', seats: ['D05'] });
-    expect(taken.status).toBe(409);
+    expect(taken.status).toBe(201);
   });
 
   it('환불 완료하면 좌석이 다시 열린다', async () => {

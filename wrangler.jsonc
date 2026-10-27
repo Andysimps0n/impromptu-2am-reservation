@@ -23,3 +23,10 @@
     }
   ]
 }
+
+// npx wrangler secret put ADMIN_KAKAO_IDS
+// to refreash user on white list
+// rewrite 
+
+// npx wrangler d1 execute DB --local --command "SELECT kakao_id, nickname, role FROM users WHERE kakao_id != 'local:password'"
+// to see id in terminal --> add id to whitebox

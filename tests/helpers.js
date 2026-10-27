@@ -119,7 +119,7 @@ export async function seedBooking(input = {}) {
 
   for (const [index, seat] of seats.entries()) {
     statements.push(env.DB.prepare('INSERT INTO booking_seats(seat,booking_id) VALUES(?,?)').bind(seat, id));
-    if (['pending', 'paid', 'refund_pending'].includes(status)) {
+    if (['pending', 'paid'].includes(status)) {
       statements.push(env.DB.prepare('INSERT INTO performance_seat_locks(show_id,seat,booking_id) VALUES(?,?,?)').bind(showId, seat, id));
       statements.push(env.DB.prepare('INSERT INTO phone_seat_locks(show_id,phone,slot,booking_id,seat) VALUES(?,?,?,?,?)')
         .bind(showId, phone, index + 1, id, seat));
