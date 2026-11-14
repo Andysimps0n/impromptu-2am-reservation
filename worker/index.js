@@ -5,6 +5,7 @@ const SITE_CSS = __SITE_CSS__;
 const LOGO_PNG = __LOGO_PNG__;
 const HERO_LOGO_PNG = __HERO_LOGO_PNG__;
 const INSTRUMENTS_PNG = __INSTRUMENTS_PNG__;
+const POSTER_BACKGROUND_JPG = __POSTER_BACKGROUND_JPG__;
 const PRICE = 6500;
 const HOLD_MS = 30 * 60 * 1000;
 const BOOKING_RETENTION_MS = 90 * 24 * 60 * 60 * 1000;
@@ -69,7 +70,7 @@ const consumeRateLimit = async (db, request, action, limit, windowMs) => {
     DO UPDATE SET request_count=MIN(request_count+1,?) RETURNING request_count`).bind(action,keyHash,windowStart,limit + 1).first();
   return Number(row?.request_count || 0) <= limit;
 };
-const DORM_NAMES = ['장기려', '카이퍼', '로뎀', '벧엘'];
+const LOOKUP_WORDS = ['든든', '따스', '맘스', '라운지', '에인트'];
 const randomInt = max => {
   // Rejection sampling keeps crypto.getRandomValues uniform over 0..max-1.
   const limit = Math.floor(0x100000000 / max) * max;
@@ -77,9 +78,16 @@ const randomInt = max => {
   do crypto.getRandomValues(buffer); while (buffer[0] >= limit);
   return buffer[0] % max;
 };
-const createLookupCode = () => `${DORM_NAMES[randomInt(DORM_NAMES.length)]} ${101 + randomInt(401)}호`;
+// 예: 든든919, 맘스471. 단어 5개 × 1~999.
+const createLookupCode = () => `${LOOKUP_WORDS[randomInt(LOOKUP_WORDS.length)]}${1 + randomInt(999)}`;
 const normalizeLookupCode = value => {
   const compact = String(value || '').replace(/\s+/g, '');
+  const word = compact.match(/^(든든|따스|맘스|라운지|에인트)0*(\d{1,3})$/);
+  if (word) {
+    const number = Number(word[2]);
+    if (number >= 1 && number <= 999) return { lookupCode: `${word[1]}${number}` };
+  }
+  // 예전 기숙사 호실 코드(장기려 402호)로 받은 예약도 그대로 찾는다.
   const dorm = compact.match(/^(장기려|카이퍼|로뎀|벧엘)(\d{3})호?$/);
   if (dorm) return { lookupCode: `${dorm[1]} ${dorm[2]}호` };
   return { id: compact.toUpperCase() };
@@ -163,6 +171,9 @@ const kakaoSettings = env => {
   return { restKey, redirectUri, clientSecret, ready: Boolean(restKey && redirectOk) };
 };
 
+// 화면 라우팅은 브라우저(react-router)가 맡는다. 이 경로들은 모두 같은 index.html을 돌려준다.
+const SPA_PATH = /^\/(?:booking(?:\/(?:seats|guide|lookup))?|admin(?:\/events\/[^/]+)?|ticket)?\/?$/;
+
 const redirectTo = (location, cookies = []) => {
   const headers = new Headers({ ...SECURITY_HEADERS, location, 'cache-control': 'no-store' });
   for (const cookie of cookies) headers.append('set-cookie', cookie);
@@ -170,7 +181,7 @@ const redirectTo = (location, cookies = []) => {
 };
 
 const authErrorLocation = (next, code) => (
-  authNext(next) === 'booking' ? `/?booking=1&auth_error=${code}#booking-seats` : `/?admin=1&auth_error=${code}`
+  authNext(next) === 'booking' ? `/booking/seats?auth_error=${code}` : `/admin?auth_error=${code}`
 );
 
 const kakaoFailure = (request, next, status, message, code) => (
@@ -382,8 +393,165 @@ const sendBookingConfirmationSms = async (env, row, ticketUrl) => {
 const recordSmsResult = (db, bookingId, result) => db.prepare(`UPDATE bookings
   SET notification_status=?,notification_error_code=?,notification_updated_at=?
   WHERE id=? AND notification_status='sending'`).bind(result.status, result.errorCode || null, Date.now(), bookingId).run();
+// 구글 스프레드시트 동기화: 3분마다 D1 전체를 읽고, 내용이 바뀐 탭만 다시 쓴다. DB → 시트 단방향.
+const SHEET_SYNC_CRON = '*/3 * * * *';
+const SHEET_SCOPE = 'https://www.googleapis.com/auth/spreadsheets';
+const SHEETS_API = 'https://sheets.googleapis.com/v4/spreadsheets';
+const SHEET_USERS_TAB = '유저';
+const SHEET_HEADERS = {
+  bookings: ['예약ID', '조회코드', '회차', '상태', '이름', '연락처', '입금자명', '좌석', '금액', '예약시각', '카카오 닉네임', '문자상태'],
+  tickets: ['티켓ID', '예약ID', '회차', '좌석', '티켓 상태', '체크인 시각', '예약자 이름'],
+  users: ['카카오 회원번호', '닉네임', '역할', '가입시각', '예약 건수', '확정 좌석 수', '확정 금액', '참여 공연'],
+};
+let googleToken = { value: '', expiresAt: 0 };
+
+const base64Url = bytes => btoa(String.fromCharCode(...new Uint8Array(bytes))).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+const jsonBase64Url = value => base64Url(new TextEncoder().encode(JSON.stringify(value)));
+const pemToDer = pem => Uint8Array.from(atob(pem.replace(/\\n/g, '\n').replace(/-----[^-]+-----/g, '').replace(/\s+/g, '')), char => char.charCodeAt(0));
+const quoteSheet = title => `'${title.replace(/'/g, "''")}'`;
+const kstText = ms => (ms ? new Date(ms + 9 * 60 * 60 * 1000).toISOString().slice(0, 16).replace('T', ' ') : '');
+// 사용자가 입력한 값이 =, +, -, @로 시작하면 수식으로 해석되지 않도록 앞에 작은따옴표를 붙인다.
+const sheetCell = value => {
+  if (value === null || value === undefined) return '';
+  if (typeof value === 'number') return value;
+  const text = String(value);
+  return /^[=+\-@]/.test(text) ? `'${text}` : text;
+};
+
+const getGoogleAccessToken = async env => {
+  if (googleToken.value && Date.now() < googleToken.expiresAt - 60000) return googleToken.value;
+  const now = Math.floor(Date.now() / 1000);
+  const unsigned = `${jsonBase64Url({ alg: 'RS256', typ: 'JWT' })}.${jsonBase64Url({
+    iss: env.GOOGLE_SERVICE_ACCOUNT_EMAIL,
+    scope: SHEET_SCOPE,
+    aud: 'https://oauth2.googleapis.com/token',
+    iat: now,
+    exp: now + 3600,
+  })}`;
+  const key = await crypto.subtle.importKey('pkcs8', pemToDer(env.GOOGLE_PRIVATE_KEY), { name: 'RSASSA-PKCS1-v1_5', hash: 'SHA-256' }, false, ['sign']);
+  const signature = await crypto.subtle.sign('RSASSA-PKCS1-v1_5', key, new TextEncoder().encode(unsigned));
+  const response = await fetch('https://oauth2.googleapis.com/token', {
+    method: 'POST',
+    headers: { 'content-type': 'application/x-www-form-urlencoded' },
+    body: new URLSearchParams({ grant_type: 'urn:ietf:params:oauth:grant-type:jwt-bearer', assertion: `${unsigned}.${base64Url(signature)}` }),
+    signal: AbortSignal.timeout(8000),
+  });
+  if (!response.ok) throw Object.assign(new Error('google_token_failed'), { status: response.status });
+  const data = await response.json();
+  googleToken = { value: data.access_token, expiresAt: Date.now() + data.expires_in * 1000 };
+  return googleToken.value;
+};
+const sheetsRequest = async (env, path, options = {}) => {
+  const response = await fetch(`${SHEETS_API}/${env.GOOGLE_SHEET_ID}${path}`, {
+    ...options,
+    headers: { authorization: `Bearer ${await getGoogleAccessToken(env)}`, 'content-type': 'application/json' },
+    signal: AbortSignal.timeout(8000),
+  });
+  if (!response.ok) throw Object.assign(new Error('google_sheets_failed'), { status: response.status });
+  return response.json();
+};
+
+// 시트에 올릴 탭 목록을 만든다. 탭 이름은 "{공연ID} 예약", "{공연ID} 티켓", 공용 "유저".
+const buildSheetTabs = async db => {
+  const events = (await db.prepare("SELECT id,title FROM events WHERE status!='draft' ORDER BY created_at").all()).results;
+  const bookings = (await db.prepare(`SELECT b.id,b.lookup_code,b.name,b.phone,b.payer,b.amount,b.status,b.created_at,b.user_id,b.notification_status,
+      s.date_label,s.time_label,e.id AS event_id,u.nickname
+    FROM bookings b JOIN event_sessions s ON s.id=b.show_id JOIN events e ON e.id=s.event_id
+    LEFT JOIN users u ON u.id=b.user_id ORDER BY b.created_at,b.id`).all()).results;
+  const seatRows = (await db.prepare('SELECT booking_id,seat FROM booking_seats ORDER BY seat').all()).results;
+  const tickets = (await db.prepare(`SELECT t.id,t.booking_id,t.seat,t.status,t.checked_in_at,s.date_label,s.time_label,b.name,e.id AS event_id
+    FROM tickets t JOIN bookings b ON b.id=t.booking_id JOIN event_sessions s ON s.id=t.show_id JOIN events e ON e.id=s.event_id
+    ORDER BY t.show_id,t.seat`).all()).results;
+  const users = (await db.prepare('SELECT id,kakao_id,nickname,role,created_at FROM users WHERE kakao_id!=? ORDER BY created_at').bind(LOCAL_PASSWORD_KAKAO_ID).all()).results;
+
+  const seatsByBooking = new Map();
+  for (const row of seatRows) seatsByBooking.set(row.booking_id, [...(seatsByBooking.get(row.booking_id) || []), row.seat]);
+  const titleByEvent = new Map(events.map(event => [event.id, event.title]));
+
+  const tabs = new Map();
+  for (const event of events) {
+    const eventBookings = bookings.filter(row => row.event_id === event.id);
+    tabs.set(`${event.id} 예약`, [SHEET_HEADERS.bookings, ...eventBookings.map(row => {
+      const seats = seatsByBooking.get(row.id) || [];
+      return [row.id, row.lookup_code || '', `${row.date_label} ${row.time_label}`, row.status, row.name, row.phone, row.payer,
+        seats.join(', '), row.amount, kstText(row.created_at), row.nickname || '', row.notification_status];
+    })]);
+    const eventTickets = tickets.filter(row => row.event_id === event.id);
+    tabs.set(`${event.id} 티켓`, [SHEET_HEADERS.tickets, ...eventTickets.map(row => [
+      row.id, row.booking_id, `${row.date_label} ${row.time_label}`, row.seat, row.status, kstText(row.checked_in_at), row.name,
+    ])]);
+  }
+
+  // 유저별 요약은 카카오 로그인으로 예약한 건만 집계한다.
+  const statByUser = new Map();
+  for (const row of bookings) {
+    if (!row.user_id) continue;
+    const stat = statByUser.get(row.user_id) || { count: 0, seats: 0, amount: 0, events: new Set() };
+    stat.count += 1;
+    if (row.status === 'paid') {
+      stat.seats += (seatsByBooking.get(row.id) || []).length;
+      stat.amount += row.amount;
+    }
+    stat.events.add(titleByEvent.get(row.event_id) || row.event_id);
+    statByUser.set(row.user_id, stat);
+  }
+  tabs.set(SHEET_USERS_TAB, [SHEET_HEADERS.users, ...users.map(user => {
+    const stat = statByUser.get(user.id) || { count: 0, seats: 0, amount: 0, events: new Set() };
+    return [user.kakao_id, user.nickname, user.role, kstText(user.created_at), stat.count, stat.seats, stat.amount, [...stat.events].join(', ')];
+  })]);
+  return tabs;
+};
+
+// 시트 상태를 DB 기준으로 맞춘다. 내용 해시가 같은 탭은 건너뛰고, 쓰기가 끝난 탭만 상태를 저장한다.
+const runSheetSync = async env => {
+  if (!env.GOOGLE_SHEET_ID || !env.GOOGLE_SERVICE_ACCOUNT_EMAIL || !env.GOOGLE_PRIVATE_KEY) return 0;
+  const db = env.DB;
+  const tabs = await buildSheetTabs(db);
+  const state = new Map((await db.prepare('SELECT tab,sheet_id,content_hash FROM sheet_sync_state').all()).results.map(row => [row.tab, row]));
+  const meta = await sheetsRequest(env, '?fields=sheets.properties(sheetId,title)');
+  const sheetIds = new Map((meta.sheets || []).map(sheet => [sheet.properties.title, sheet.properties.sheetId]));
+
+  // 이전에 관리하던 탭 중 DB에 더 이상 없는 탭(공연 삭제 등)만 지운다. 직접 만든 다른 탭은 건드리지 않는다.
+  for (const tab of state.keys()) {
+    if (tabs.has(tab)) continue;
+    if (sheetIds.has(tab)) {
+      await sheetsRequest(env, ':batchUpdate', { method: 'POST', body: JSON.stringify({ requests: [{ deleteSheet: { sheetId: sheetIds.get(tab) } }] }) });
+    }
+    await db.prepare('DELETE FROM sheet_sync_state WHERE tab=?').bind(tab).run();
+  }
+
+  let written = 0;
+  for (const [tab, rows] of tabs) {
+    const hash = await sha256Hex(JSON.stringify(rows));
+    if (state.get(tab)?.content_hash === hash && sheetIds.has(tab)) continue;
+    let sheetId = sheetIds.get(tab);
+    if (sheetId === undefined) {
+      const reply = await sheetsRequest(env, ':batchUpdate', { method: 'POST', body: JSON.stringify({ requests: [{ addSheet: { properties: { title: tab } } }] }) });
+      sheetId = reply.replies[0].addSheet.properties.sheetId;
+    }
+    const range = quoteSheet(tab);
+    await sheetsRequest(env, '/values:batchClear', { method: 'POST', body: JSON.stringify({ ranges: [range] }) });
+    await sheetsRequest(env, '/values:batchUpdate', { method: 'POST', body: JSON.stringify({
+      valueInputOption: 'RAW',
+      data: [{ range: `${range}!A1`, values: rows.map(row => row.map(sheetCell)) }],
+    }) });
+    await db.prepare(`INSERT INTO sheet_sync_state(tab,sheet_id,content_hash,synced_at) VALUES(?,?,?,?)
+      ON CONFLICT(tab) DO UPDATE SET sheet_id=excluded.sheet_id,content_hash=excluded.content_hash,synced_at=excluded.synced_at`)
+      .bind(tab, sheetId, hash, Date.now()).run();
+    written += 1;
+  }
+  return written;
+};
+const sha256Hex = async text => bytesToHex(await crypto.subtle.digest('SHA-256', new TextEncoder().encode(text)));
+
 export default {
-  async scheduled(_controller, env, ctx) {
+  async scheduled(controller, env, ctx) {
+    if (controller.cron === SHEET_SYNC_CRON) {
+      ctx.waitUntil(runSheetSync(env).catch(error => {
+        console.error('sheet_sync_failed', { errorType: String(error?.name || 'Error').slice(0, 40), status: error?.status || null });
+      }));
+      return;
+    }
     ctx.waitUntil(runScheduledCleanup(env.DB).catch(error => {
       console.error('scheduled_cleanup_failed', { errorType: String(error?.name || 'Error').slice(0, 40) });
     }));
@@ -393,7 +561,7 @@ export default {
     const db = env.DB;
     try {
       const headRequest = request.method === 'HEAD';
-      if ((request.method === 'GET' || headRequest) && url.pathname === '/') return new Response(headRequest ? null : INDEX_HTML, { headers: { ...SECURITY_HEADERS, 'content-type': 'text/html; charset=utf-8', 'cache-control': 'no-store' } });
+      if ((request.method === 'GET' || headRequest) && SPA_PATH.test(url.pathname)) return new Response(headRequest ? null : INDEX_HTML, { headers: { ...SECURITY_HEADERS, 'content-type': 'text/html; charset=utf-8', 'cache-control': 'no-store' } });
       if ((request.method === 'GET' || headRequest) && url.pathname === '/privacy') return new Response(headRequest ? null : PRIVACY_HTML, { headers: { ...SECURITY_HEADERS, 'content-type': 'text/html; charset=utf-8', 'cache-control': 'no-store' } });
       if ((request.method === 'GET' || headRequest) && url.pathname === '/app.js') return new Response(headRequest ? null : APP_JS, { headers: { ...SECURITY_HEADERS, 'content-type': 'text/javascript; charset=utf-8', 'cache-control': 'no-store' } });
       if ((request.method === 'GET' || headRequest) && url.pathname === '/styles.css') return new Response(headRequest ? null : SITE_CSS, { headers: { ...SECURITY_HEADERS, 'content-type': 'text/css; charset=utf-8', 'cache-control': 'no-store' } });
@@ -404,6 +572,10 @@ export default {
       if (request.method === 'GET' && decodeURIComponent(url.pathname) === '/즉새두로고1.png') {
         const bytes = Uint8Array.from(atob(HERO_LOGO_PNG), char => char.charCodeAt(0));
         return new Response(bytes, { headers: { ...SECURITY_HEADERS, 'content-type': 'image/png', 'cache-control': 'no-store' } });
+      }
+      if (request.method === 'GET' && url.pathname === '/poster-background.jpg') {
+        const bytes = Uint8Array.from(atob(POSTER_BACKGROUND_JPG), char => char.charCodeAt(0));
+        return new Response(bytes, { headers: { ...SECURITY_HEADERS, 'content-type': 'image/jpeg', 'cache-control': 'no-store' } });
       }
       if (request.method === 'GET' && url.pathname === '/poster-instruments.png') {
         const bytes = Uint8Array.from(atob(INSTRUMENTS_PNG), char => char.charCodeAt(0));
@@ -567,8 +739,8 @@ export default {
           const user = await upsertKakaoUser(db, env, profile.kakaoId, profile.nickname);
           const token = await startSession(db, user.id);
           const destination = next === 'booking'
-            ? '/?booking=1#booking-seats'
-            : (user.role === 'admin' ? '/?admin=1' : '/?admin=1&auth_error=not_admin');
+            ? '/booking/seats'
+            : (user.role === 'admin' ? '/admin' : '/admin?auth_error=not_admin');
           return redirectTo(destination, [sessionCookie(token), clearStateCookie()]);
         } catch (error) {
           console.error('kakao_login_failed', { message: String(error?.message || error).slice(0, 180) });
@@ -665,13 +837,24 @@ export default {
         const denied = await requireAdmin(request, env);
         if (denied) return denied;
         const eventId = eventEdit[1];
-        const current = await db.prepare('SELECT status,booking_open FROM events WHERE id=?').bind(eventId).first();
+        const current = await db.prepare('SELECT status,ticket_price FROM events WHERE id=?').bind(eventId).first();
         if (!current) return json({ error: '공연을 찾지 못했습니다.' }, 404);
-        if (current.status !== 'draft' && !(current.status === 'published' && current.booking_open === 0)) return json({ error: '초안 또는 예매 접수가 닫힌 공연만 수정할 수 있습니다.' }, 409);
-        const hasBookings = await db.prepare('SELECT COUNT(*) AS count FROM bookings b JOIN event_sessions s ON s.id=b.show_id WHERE s.event_id=?').bind(eventId).first();
-        if (hasBookings?.count) return json({ error: '예약 기록이 있는 공연은 수정할 수 없습니다.' }, 409);
+        if (current.status === 'archived') return json({ error: '보관된 공연은 수정할 수 없습니다.' }, 409);
         const draft = normalizeEventInput(await readBody(request));
+        const booked = await db.prepare('SELECT COUNT(*) AS count FROM bookings b JOIN event_sessions s ON s.id=b.show_id WHERE s.event_id=?').bind(eventId).first();
         const now = Date.now();
+        const sessionRows = (await db.prepare('SELECT id FROM event_sessions WHERE event_id=? ORDER BY sort_order').bind(eventId).all()).results;
+        if (booked?.count) {
+          // 예약이 있으면 예약이 가리키는 회차 ID를 그대로 두고, 날짜·시간만 바꾼다.
+          if (draft.price !== current.ticket_price) return json({ error: '예약이 있는 공연은 티켓 가격을 바꿀 수 없습니다.' }, 409);
+          if (draft.sessions.length !== sessionRows.length) return json({ error: '예약이 있는 공연은 회차를 추가하거나 삭제할 수 없습니다.' }, 409);
+          const statements = [db.prepare('UPDATE events SET title=?,subtitle=?,description=?,venue=?,updated_at=? WHERE id=?')
+            .bind(draft.title,draft.subtitle,draft.description,draft.venue,now,eventId)];
+          draft.sessions.forEach((session,index) => statements.push(db.prepare('UPDATE event_sessions SET date_label=?,time_label=?,starts_at=? WHERE id=?')
+            .bind(session.dateLabel,session.timeLabel,session.startsAt,sessionRows[index].id)));
+          await db.batch(statements);
+          return json({ updated: true });
+        }
         const statements = [db.prepare('UPDATE events SET title=?,subtitle=?,description=?,venue=?,ticket_price=?,updated_at=? WHERE id=?')
           .bind(draft.title,draft.subtitle,draft.description,draft.venue,draft.price,now,eventId),db.prepare('DELETE FROM event_sessions WHERE event_id=?').bind(eventId)];
         draft.sessions.forEach((session,index) => statements.push(db.prepare(`INSERT INTO event_sessions(id,event_id,sort_order,date_label,time_label,starts_at)

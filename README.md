@@ -68,7 +68,13 @@ npm run deploy:cloudflare
 
 ## 공연 관리
 
-관객용 예매와 관리자 UI는 React로 구현하며 각각 `src/public/PublicApp.jsx`, `src/admin/AdminApp.jsx`에서 관리합니다. Worker API와 D1은 기존 구조를 유지합니다.
+관객용 예매와 관리자 UI는 React와 react-router로 구현합니다. 진입점은 `src/main.jsx`, 경로 정의는 `src/App.jsx`입니다.
+
+- `src/pages/` 경로별 화면 (`/`, `/booking/seats|guide|lookup`, `/ticket#t=토큰`, `/admin`, `/admin/events/:eventId`)
+- `src/features/booking/`, `src/features/admin/` 각 화면에서 쓰는 기능 컴포넌트
+- `src/components/` 공용 컴포넌트, `src/lib/` API 호출과 포맷 함수
+
+화면 경로는 Worker가 모두 같은 `index.html`로 돌려주고(`SPA_PATH`), 예전 주소(`/#booking-seats`, `/?admin=1`, 문자로 보낸 `/#t=토큰`)는 브라우저에서 새 경로로 옮깁니다. Worker API와 D1은 기존 구조를 유지합니다.
 
 관리자 화면에서 새 공연을 초안으로 만들고 제목, 부제, 장소, 가격, 회차별 날짜와 시간을 편집할 수 있습니다. 이전 공연을 복제하면 설정과 일정만 새 초안에 복사되며 예약·티켓·검표 기록은 복사되지 않습니다. 게시된 공연은 한 번에 하나만 둘 수 있습니다. 새 공연 게시 전 기존 공연을 보관하면 기존 기록은 남고 예매 접수만 닫힙니다. 모든 공연은 삭제할 수 있으며, 삭제 시 공연 제목을 정확히 입력해야 합니다. 삭제하면 공연 회차와 해당 예약·티켓·검표 기록도 함께 영구 삭제됩니다.
 
@@ -89,3 +95,21 @@ Solapi 계정의 API 키, API 시크릿과 소유/사용 권한을 확인한 발
 현재 배포 주소 기준 링크 문자는 EUC-KR 환산 90바이트 이내로 지정되어 SMS로 전송됩니다. 신규 링크는 96비트 난수 토큰을 쓰며, 기존 22자 토큰 링크도 계속 지원합니다. API 키와 시크릿은 `.env.cloudflare`에만 입력하고 Git에 올리지 마세요.
 
 로컬 SQLite의 기존 예약은 배포 DB로 복사하지 않습니다. QA 기록과 개인정보가 섞일 수 있어 배포 DB는 비어 있는 상태로 시작합니다.
+
+## 구글 스프레드시트 동기화
+
+DB의 예약·티켓·유저 정보를 구글 스프레드시트에 3분마다 복사합니다(DB → 시트 단방향). 시트에서 고친 값은 다음 동기화 때 덮어써집니다.
+
+- 탭: `{공연ID} 예약`, `{공연ID} 티켓`, 공용 `유저`. 직접 만든 다른 탭은 건드리지 않습니다.
+- 바뀐 탭만 다시 씁니다. 내용이 같으면 시트에 쓰지 않습니다.
+- 이름·연락처는 원본 그대로 들어갑니다. 처리방침의 위탁 항목을 먼저 확인하세요.
+
+설정:
+
+1. Google Cloud 프로젝트에서 Google Sheets API를 켭니다.
+2. 서비스 계정을 만들고 JSON 키를 받습니다.
+3. 새 스프레드시트를 만들고 서비스 계정 이메일에 편집자로 공유합니다.
+4. `.env.cloudflare`에 `GOOGLE_SERVICE_ACCOUNT_EMAIL`, `GOOGLE_PRIVATE_KEY`, `GOOGLE_SHEET_ID`를 넣고 `npm run set:cloudflare-sheets-secrets`를 실행합니다.
+5. `npm run migrate:cloudflare`로 `sheet_sync_state` 테이블을 만들고 배포합니다.
+
+로컬에서는 `.dev.vars`에 같은 값을 넣고 `npx wrangler dev --test-scheduled` 후 `curl "http://localhost:8787/__scheduled?cron=*/3+*+*+*+*"`로 한 번 실행해 확인할 수 있습니다.

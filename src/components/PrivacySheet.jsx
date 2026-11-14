@@ -131,6 +131,14 @@ export function PrivacySheet({ onClose }) {
                 <td>입금 확인 후 티켓 링크 문자 발송. 연락처, 메시지 본문, 발송 결과 처리</td>
               </tr>
               <tr>
+                <th>Google LLC</th>
+                <td>
+                  운영용 구글 스프레드시트에 예약·티켓·유저 정보를 3분 이내 주기로 복제 저장. 예약 데이터가
+                  삭제되면 시트의 해당 행도 다음 동기화 때 지워지지만, 구글 시트의 버전 기록에는 이전 내용이
+                  남을 수 있습니다.
+                </td>
+              </tr>
+              <tr>
                 <th>문자 전송사</th>
                 <td>
                   Solapi의 공개 처리방침에 기재된 국내 문자 전송사(주식회사 케이티, 주식회사
@@ -152,7 +160,8 @@ export function PrivacySheet({ onClose }) {
             있습니다.
           </p>
           <ul>
-            <li>이전받는 자: Cloudflare, Inc. (Cloudflare)</li>
+            <li>이전받는 자: Cloudflare, Inc. (Cloudflare), Google LLC (구글 스프레드시트 운영 복제)</li>
+            <li>구글 스프레드시트 처리 지역: [운영팀 확인 후 기재]</li>
             <li>이전 항목: 위 1항의 예매·티켓 정보와 서비스 운영에 필요한 접속·로그 정보</li>
             <li>
               이전 시기 및 방법: 예매 등록·조회·관리 요청 시 인터넷을 통한 Worker 및 D1 서비스 처리

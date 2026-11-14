@@ -1,4 +1,5 @@
 import React from 'react';
+import { KakaoIcon } from './icons.jsx';
 
 // Query values are codes, never free-form text, so a crafted link cannot inject a message.
 export const AUTH_ERROR_TEXT = {
@@ -16,12 +17,7 @@ export const authErrorText = code => AUTH_ERROR_TEXT[code] || '';
 export function KakaoLoginButton({ href, children = '카카오 로그인', disabled = false }) {
   const content = (
     <>
-      <svg viewBox="0 0 24 24" aria-hidden="true">
-        <path
-          fill="currentColor"
-          d="M12 3C6.477 3 2 6.463 2 10.691c0 2.676 1.78 5.023 4.46 6.352l-1.136 4.152c-.1.366.32.662.65.45l4.96-3.284c.34.033.686.05 1.066.05 5.523 0 10-3.463 10-7.72C22 6.463 17.523 3 12 3z"
-        />
-      </svg>
+      <KakaoIcon />
       {children}
     </>
   );

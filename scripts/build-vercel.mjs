@@ -13,7 +13,7 @@ const [sourceHtml, styles] = await Promise.all([
   readFile(resolve(root, 'index.html'), 'utf8'),
   readFile(resolve(root, 'styles.css'), 'utf8'),
 ]);
-const clientBundle = await build({ entryPoints: [resolve(root, 'app.js')], bundle: true, format: 'iife', platform: 'browser', target: 'es2020', minify: true, write: false });
+const clientBundle = await build({ entryPoints: [resolve(root, 'src/main.jsx')], bundle: true, format: 'iife', platform: 'browser', target: 'es2020', minify: true, write: false });
 const app = clientBundle.outputFiles[0].text;
 const output = resolve(root, 'vercel-dist');
 await mkdir(output, { recursive: true });
@@ -23,4 +23,5 @@ await writeFile(resolve(output, 'styles.css'), styles);
 await copyFile(resolve(root, logoName), resolve(output, logoName));
 await copyFile(resolve(root, heroLogoName), resolve(output, heroLogoName));
 await copyFile(resolve(root, 'poster-instruments.png'), resolve(output, 'poster-instruments.png'));
+await copyFile(resolve(root, 'poster-background.jpg'), resolve(output, 'poster-background.jpg'));
 console.log(`Built ${output}`);

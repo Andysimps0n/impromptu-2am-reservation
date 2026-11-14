@@ -78,21 +78,55 @@ describe('공연 관리', () => {
     expect(event.data.event).toBeNull();
   });
 
-  it('예약이 있는 공연은 수정할 수 없다', async () => {
+  it('예약이 있어도 날짜와 시간은 고칠 수 있고 회차 ID는 유지된다', async () => {
     await seedBooking({ phone: '01036363636', seats: ['F06'], status: 'pending' });
     const admin = await loginAdmin();
-    await api('/api/admin/settings', {
-      method: 'POST',
-      cookie: admin.cookie,
-      body: { showId: '1', bookingOpen: false },
-    });
+    const before = (await api('/api/event')).data.event;
     const updated = await api('/api/admin/events/legacy-2026', {
       method: 'PUT',
       cookie: admin.cookie,
-      body: draftEvent,
+      body: {
+        title: before.title,
+        subtitle: before.subtitle,
+        description: before.description,
+        venue: before.venue,
+        ticketPrice: before.ticketPrice,
+        sessions: before.sessions.map(() => ({
+          dateLabel: '2026년 11월 21일 토요일',
+          timeLabel: '오후 9시',
+          startsAt: '2026-11-21T21:00:00+09:00',
+        })),
+      },
     });
-    expect(updated.status).toBe(409);
-    expect(updated.data.error).toMatch(/예약 기록/);
+    expect(updated.status).toBe(200);
+    const after = (await api('/api/event')).data.event;
+    expect(after.sessions.map(s => s.id)).toEqual(before.sessions.map(s => s.id));
+    expect(after.sessions[0].timeLabel).toBe('오후 9시');
+  });
+
+  it('예약이 있는 공연은 티켓 가격과 회차 수를 바꿀 수 없다', async () => {
+    await seedBooking({ phone: '01037373737', seats: ['F07'], status: 'pending' });
+    const admin = await loginAdmin();
+    const before = (await api('/api/event')).data.event;
+    const priceChanged = await api('/api/admin/events/legacy-2026', {
+      method: 'PUT',
+      cookie: admin.cookie,
+      body: {
+        ...draftEvent,
+        ticketPrice: before.ticketPrice + 1000,
+        sessions: before.sessions.map(s => ({ dateLabel: s.dateLabel, timeLabel: s.timeLabel, startsAt: s.startsAt })),
+      },
+    });
+    expect(priceChanged.status).toBe(409);
+    expect(priceChanged.data.error).toMatch(/티켓 가격/);
+
+    const countChanged = await api('/api/admin/events/legacy-2026', {
+      method: 'PUT',
+      cookie: admin.cookie,
+      body: { ...draftEvent, ticketPrice: before.ticketPrice, sessions: before.sessions.slice(1).map(s => ({ dateLabel: s.dateLabel, timeLabel: s.timeLabel, startsAt: s.startsAt })) },
+    });
+    expect(countChanged.status).toBe(409);
+    expect(countChanged.data.error).toMatch(/회차/);
   });
 
   it('초안 공연 회차는 관객이 예매할 수 없다', async () => {

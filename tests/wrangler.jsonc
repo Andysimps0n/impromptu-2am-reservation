@@ -11,7 +11,8 @@
     "__SITE_CSS__": "\"\"",
     "__LOGO_PNG__": "\"\"",
     "__HERO_LOGO_PNG__": "\"\"",
-    "__INSTRUMENTS_PNG__": "\"\""
+    "__INSTRUMENTS_PNG__": "\"\"",
+    "__POSTER_BACKGROUND_JPG__": "\"\""
   },
   "vars": {
     "ADMIN_USERNAME": "test-admin",

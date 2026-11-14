@@ -122,6 +122,36 @@ if (args[0] === 'set-sms-secrets') {
   process.exit(0);
 }
 
+if (args[0] === 'set-sheets-secrets') {
+  const required = ['GOOGLE_SERVICE_ACCOUNT_EMAIL', 'GOOGLE_PRIVATE_KEY', 'GOOGLE_SHEET_ID'];
+  const missing = required.filter(name => !values[name]);
+  if (missing.length) {
+    console.error(`Set ${missing.join(', ')} in .env.cloudflare first.`);
+    process.exit(1);
+  }
+  // .env 한 줄에 넣을 수 있도록 키의 줄바꿈은 \n 으로 적어도 된다. 워커가 실행 시 줄바꿈으로 바꾼다.
+  if (!values.GOOGLE_PRIVATE_KEY.includes('BEGIN PRIVATE KEY')) {
+    console.error('GOOGLE_PRIVATE_KEY must be the private_key value from the service account JSON.');
+    process.exit(1);
+  }
+  for (const name of required) {
+    const result = spawnSync('npx', ['--yes', 'wrangler', 'secret', 'put', name], {
+      cwd: root,
+      env: { ...process.env, CLOUDFLARE_ACCOUNT_ID: values.CLOUDFLARE_ACCOUNT_ID, CLOUDFLARE_API_TOKEN: values.CLOUDFLARE_API_TOKEN },
+      encoding: 'utf8',
+      input: `${values[name]}\n`,
+      stdio: ['pipe', 'inherit', 'inherit'],
+    });
+    if (result.error) {
+      console.error(result.error.message);
+      process.exit(1);
+    }
+    if (result.status !== 0) process.exit(result.status ?? 1);
+  }
+  console.log('Google Sheets sync secrets uploaded.');
+  process.exit(0);
+}
+
 const result = spawnSync('npx', ['--yes', 'wrangler', ...args], {
   cwd: root,
   env: { ...process.env, CLOUDFLARE_ACCOUNT_ID: values.CLOUDFLARE_ACCOUNT_ID, CLOUDFLARE_API_TOKEN: values.CLOUDFLARE_API_TOKEN },

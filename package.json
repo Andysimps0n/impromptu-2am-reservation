@@ -13,7 +13,8 @@
     "migrate:cloudflare": "node scripts/cloudflare.mjs d1 migrations apply DB --remote",
     "set:cloudflare-admin-password": "node scripts/cloudflare.mjs set-admin-password",
     "set:cloudflare-kakao-secrets": "node scripts/cloudflare.mjs set-kakao-secrets",
-    "set:cloudflare-sms-secrets": "node scripts/cloudflare.mjs set-sms-secrets"
+    "set:cloudflare-sms-secrets": "node scripts/cloudflare.mjs set-sms-secrets",
+    "set:cloudflare-sheets-secrets": "node scripts/cloudflare.mjs set-sheets-secrets"
   },
   "devDependencies": {
     "@cloudflare/vitest-plugin": "^1.4.6",
@@ -25,6 +26,7 @@
     "html5-qrcode": "^2.3.8",
     "qrcode": "^1.5.4",
     "react": "^19.3.1",
-    "react-dom": "^19.3.1"
+    "react-dom": "^19.3.1",
+    "react-router": "^7.18.5"
   }
 }

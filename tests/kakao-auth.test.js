@@ -134,7 +134,7 @@ describe('카카오 로그인', () => {
     useKakaoEnv();
     const admin = await loginWithKakao({ kakaoId: '1001', nickname: '운영자', ip: '198.51.100.41' });
     expect(admin.callback.status).toBe(302);
-    expect(admin.callback.headers.get('location')).toBe('/?admin=1');
+    expect(admin.callback.headers.get('location')).toBe('/admin');
     expect(admin.session.raw).toMatch(/HttpOnly/);
     expect(admin.session.raw).toMatch(/Secure/);
     expect(admin.session.raw).toMatch(/SameSite=Lax/);
@@ -144,7 +144,7 @@ describe('카카오 로그인', () => {
     expect(bookings.status).toBe(200);
 
     const outsider = await loginWithKakao({ kakaoId: '2002', nickname: '관객', ip: '198.51.100.42' });
-    expect(outsider.callback.headers.get('location')).toBe('/?admin=1&auth_error=not_admin');
+    expect(outsider.callback.headers.get('location')).toBe('/admin?auth_error=not_admin');
     const denied = await api('/api/admin/bookings?show=1', { cookie: outsider.session.header });
     expect(denied.status).toBe(403);
     const session = await api('/api/admin/session', { cookie: outsider.session.header });
@@ -217,7 +217,7 @@ describe('카카오 로그인', () => {
     expect(anonymous.status).toBe(401);
 
     const first = await loginWithKakao({ kakaoId: '3003', next: 'booking', ip: '198.51.100.71' });
-    expect(first.callback.headers.get('location')).toBe('/?booking=1#booking-seats');
+    expect(first.callback.headers.get('location')).toBe('/booking/seats');
     const held = await api('/api/bookings', {
       method: 'POST',
       ip: '203.0.113.71',

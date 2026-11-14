@@ -9,7 +9,7 @@
     "head_sampling_rate": 1
   },
   "triggers": {
-    "crons": ["0 18 * * *"]
+    "crons": ["0 18 * * *", "*/3 * * * *"]
   },
   "vars": {
     "ADMIN_USERNAME": "admin"
